@@ -29,7 +29,7 @@ import uuid
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import LABEL, ROOT, load, now, option, save, use_venv  # noqa: E402
+from job import LABEL, ROOT, SENTENCE_END, load, now, option, save, use_venv  # noqa: E402
 
 API = "https://api.elevenlabs.io"
 RESERVE = 10_000
@@ -295,7 +295,7 @@ def cmd_speak(client, run_dir, name, code, args, confirm):
     # (up to 3, from each response's request-id header) and next_text, per
     # https://elevenlabs.io/docs/eleven-api/guides/how-to/text-to-speech/request-stitching. The with-timestamps
     # route also returns when each character is spoken, for placing each sentence where the English one starts.
-    parts = [p for p in re.split(r"(?<=[.!?…])\s+", text) if p]
+    parts = [p.strip() for p in SENTENCE_END.split(text) if p.strip()]
     clips_dir = folder / "sentences"
     clips_dir.mkdir(parents=True, exist_ok=True)
     ids, cost, clips = [], 0, []

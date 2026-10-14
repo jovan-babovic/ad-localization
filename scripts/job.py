@@ -34,6 +34,9 @@ FIELD_ALIASES = {"intro": "primary_text", "introductory_text": "primary_text", "
                  "title": "headline", "button": "cta", "call_to_action": "cta", "desc": "description",
                  "display_path": "path"}
 SURFACE_FIELDS = {"image": "image_text", "spoken": "script", "screen": "screen_text"}
+# Where one sentence ends and the next begins: . ! ? … before a space, or Chinese and Japanese 。！？ (no space after them;
+# a closing quote right after one stays with its sentence).
+SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|(?<=[。！？])(?![”』」）])\s*|(?<=[。！？][”』」）])\s*")
 LONGER_THAN_ENGLISH = 1.2  # an English text already over the recommended length: flag a draft only past 20% longer
 
 

@@ -146,6 +146,38 @@ class ResetImageText(unittest.TestCase):
         with mock.patch("sys.stdout"):
             main()
 
+    def test_chinese_breaks_between_characters_never_before_closing_punctuation(self):
+        self.assertEqual([p for p, _ in tool.pieces("转向 AI，现在「开始」。")], ["转", "向", "AI，", "现", "在", "「开", "始」。"])
+        self.assertEqual(tool.pieces("Every AI journey"), [["Every", False], ["AI", True], ["journey", True]])
+        font = next((tool.load_font(f, 40) for f in map(tool.resolve_font, ("PingFang.ttc#3", "Hiragino Sans GB.ttc#0")) if f), None)
+        if not font:
+            self.skipTest("no Chinese font installed")
+        lines = tool.wrap("您在未来几年做出的决策，影响将不断累积。", font, 300, 0)
+        self.assertGreater(len(lines), 1)
+        self.assertEqual("".join(lines), "您在未来几年做出的决策，影响将不断累积。")
+        self.assertFalse(any(l[0] in tool.NO_LINE_START for l in lines))
+
+    def test_text_the_font_cannot_draw_gets_a_font_of_the_same_weight(self):
+        arial, light = tool.resolve_font("Arial.ttf"), tool.resolve_font("HelveticaNeue.ttc#7")
+        if not (arial and light and tool.resolve_font("Hiragino Sans GB.ttc")):
+            self.skipTest("macOS fonts not installed")
+        self.assertEqual(tool.script_font(arial, "Décision", "fr"), (arial, 1.0))
+        spec, scale = tool.script_font(arial, "决策", "zh-Hans")
+        self.assertNotEqual(spec, arial)
+        self.assertEqual(scale, tool.CJK_SCALE)
+        self.assertTrue(tool.has_glyphs(spec, "决策"))
+        self.assertEqual(tool.weight_class(light), "light")
+        self.assertEqual(tool.weight_class(tool.script_font(light, "决策", "zh-Hans")[0]), "light")
+
+    def test_brand_fonts_come_first_and_keep_the_defaults(self):
+        arial = tool.resolve_font("Arial.ttf")
+        if not arial:
+            self.skipTest("Arial not installed")
+        brand, fonts = tool.candidate_fonts([arial, "/no/such/font.ttf"])
+        self.assertEqual((brand, fonts[0]), ([arial], arial))
+        self.assertEqual(fonts, list(dict.fromkeys(fonts)))
+        self.assertGreater(len(fonts), 1)
+
 
 if __name__ == "__main__":
     main()

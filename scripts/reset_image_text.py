@@ -2,6 +2,7 @@
 
   python3 scripts/reset_image_text.py detect IMAGE NEW_BOXES.json [--fonts FONTS.txt]
   python3 scripts/reset_image_text.py apply IMAGE BOXES.json TRANSLATIONS.json NEW_OUT.png
+  python3 scripts/reset_image_text.py fonts IMAGE BOXES.json NEW_SHEET.png
 
 detect  reads the text lines (Apple Vision via ocr_lines.swift, macOS), groups them into blocks and
         measures each block: ink box, text color(s), closest available font, size, line pitch,
@@ -13,6 +14,8 @@ apply   repaints only the pixels inside each "replace" box that differ from the 
         original size. If the text still does not fit, the image is written anyway and the block is
         FLAGGED "overflow: needs shorter copy" with an estimated character capacity. Nothing else in
         the image is moved, resized or redrawn. OUT.json records every box, font and flag.
+        Chinese, Japanese or Korean the block's font cannot draw is set in a macOS font of the same weight.
+fonts   draws each block's English next to the same words in its three closest fonts, to pick one by eye.
 
 TRANSLATIONS.json: {"language": "French", "blocks": {"<block id>": "text" | {"text": "...", "short": "...", "highlight": ["49 %"]}}}
 Optional block keys a reviewer may set: "transform": "upper" (source set in capitals), "highlight" (terms drawn in
@@ -21,6 +24,7 @@ Optional block keys a reviewer may set: "transform": "upper" (source set in capi
 it stays centered in it, keeps its vertical center when the type shrinks, and may use some of the side padding.
 Requires Pillow and numpy. No network, no paid services, no company data in this file.
 """
+from glob import glob
 import hashlib
 import json
 import os
@@ -38,16 +42,38 @@ import numpy as np  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import LABEL  # noqa: E402
+from job import LABEL, SENTENCE_END  # noqa: E402
 
-VERSION = "1.3"  # written into every box map and report
+VERSION = "1.4"  # written into every box map and report
 FONT_DIRS = ["~/Library/Fonts", "/Library/Fonts", "/System/Library/Fonts", "/System/Library/Fonts/Supplemental"]
+# macOS keeps some system fonts (PingFang) in an asset folder whose name differs from one Mac to the next.
+ASSET_FONT_DIRS = "/System/Library/AssetsV2/com_apple_MobileAsset_Font*/*.asset/AssetData"
 DEFAULT_FONTS = [  # file names looked up in FONT_DIRS; "name#index" picks a face in a .ttc, "name@Style" a variable style
-    # Fonts that ship with macOS. Missing ones are skipped; brand fonts go in config/fonts.txt.
-    "Arial.ttf", "Arial Bold.ttf", "HelveticaNeue.ttc#0", "HelveticaNeue.ttc#10",
-    "Avenir Next.ttc#7", "Avenir Next.ttc#5", "SFNS.ttf@Regular", "SFNS.ttf@Medium",
+    # Fonts that ship with macOS, light to bold. Missing ones are skipped. Brand fonts in config/fonts.txt are tried first.
+    "Arial.ttf", "Arial Bold.ttf", "HelveticaNeue.ttc#7", "HelveticaNeue.ttc#0", "HelveticaNeue.ttc#10",
+    "HelveticaNeue.ttc#1", "Avenir Next.ttc#10", "Avenir Next.ttc#7", "Avenir Next.ttc#5", "Avenir Next.ttc#2",
+    "Avenir.ttc#6", "SFNS.ttf@Light", "SFNS.ttf@Regular", "SFNS.ttf@Medium", "SFNS.ttf@Semibold",
     "SFNSMono.ttf@Regular", "SFNSMono.ttf@Medium", "Menlo.ttc#0", "PTMono.ttc#1", "Andale Mono.ttf", "Courier New.ttf",
 ]
+BRAND_PREFERENCE = 0.03  # a font from config/fonts.txt wins over a default whose shape overlap is at most this much better
+# Chinese, Japanese and Korean, set in fonts that ship with macOS (light, regular and bold faces), first one found wins.
+CJK_FONTS = {
+    "zh-Hans": [dict(light="PingFang.ttc#15", regular="PingFang.ttc#3", bold="PingFang.ttc#11"),
+                dict(light="Hiragino Sans GB.ttc#0", regular="Hiragino Sans GB.ttc#0", bold="Hiragino Sans GB.ttc#2"),
+                dict(light="STHeiti Light.ttc#1", regular="STHeiti Light.ttc#1", bold="STHeiti Medium.ttc#1")],
+    "zh-Hant": [dict(light="PingFang.ttc#14", regular="PingFang.ttc#2", bold="PingFang.ttc#10"),
+                dict(light="STHeiti Light.ttc#0", regular="STHeiti Light.ttc#0", bold="STHeiti Medium.ttc#0")],
+    "zh-HK": [dict(light="PingFang.ttc#12", regular="PingFang.ttc#0", bold="PingFang.ttc#8"),
+              dict(light="STHeiti Light.ttc#0", regular="STHeiti Light.ttc#0", bold="STHeiti Medium.ttc#0")],
+    "ja": [dict(light="ヒラギノ角ゴシック W2.ttc", regular="ヒラギノ角ゴシック W3.ttc", bold="ヒラギノ角ゴシック W6.ttc"),
+           dict(light="Hiragino Sans GB.ttc#0", regular="Hiragino Sans GB.ttc#0", bold="Hiragino Sans GB.ttc#2")],
+    "ko": [dict(light="AppleSDGothicNeo.ttc#8", regular="AppleSDGothicNeo.ttc#0", bold="AppleSDGothicNeo.ttc#4")],
+}
+CJK_SCALE = 0.9  # Chinese, Japanese and Korean fill the whole em: set them a little smaller than the Latin they replace
+CJK_TEXT = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]")
+BREAK_ANYWHERE = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")  # Han, kana, CJK punctuation
+NO_LINE_START = set("、。，．・：；？！）」』】〉》〕｝ー…,.!?:;)%")  # closing punctuation stays with the character before it
+NO_LINE_END = set("（「『【〈《〔｛“‘(")
 DIFF = 30          # colour distance (0-441) that counts as "not background"
 MIN_SCALE = 0.85   # smallest type size allowed, as a share of the original
 
@@ -62,10 +88,54 @@ def resolve_font(spec):
     name = spec.split("#")[0].split("@")[0]
     if Path(name).is_absolute():
         return spec if Path(name).exists() else None
-    for folder in FONT_DIRS:
+    for folder in FONT_DIRS + sorted(glob(ASSET_FONT_DIRS)):
         if (Path(folder).expanduser() / name).exists():
             return str(Path(folder).expanduser() / name) + spec[len(name):]
     return None
+
+
+def candidate_fonts(listed=None):
+    """(brand fonts, every font to try): the fonts listed in config/fonts.txt first, then the macOS defaults."""
+    brand = [f for f in (resolve_font(x) for x in (listed or [])) if f]
+    return brand, list(dict.fromkeys(brand + [f for f in (resolve_font(x) for x in DEFAULT_FONTS) if f]))
+
+
+def weight_class(spec):
+    """light, regular or bold, from the face's own style name."""
+    style = spec.partition("@")[2] or load_font(spec, 20).getname()[1]
+    style = style.lower()
+    if any(w in style for w in ("light", "thin", "hairline", "w0", "w1", "w2")):
+        return "light"
+    return "bold" if any(w in style for w in ("bold", "semi", "demi", "heavy", "black", "w6", "w7", "w8", "w9")) else "regular"
+
+
+def has_glyphs(spec, text):
+    """False when the font draws any of these characters as its missing-glyph box (the same box as U+E000)."""
+    font = load_font(spec, 40)
+
+    def drawn(ch):
+        canvas = Image.new("L", (64, 64), 0)
+        ImageDraw.Draw(canvas).text((8, 8), ch, font=font, fill=255)
+        return canvas.tobytes()
+    missing = drawn("\ue000")
+    return not any(drawn(ch) == missing for ch in set(CJK_TEXT.findall(text)))
+
+
+def script_font(spec, text, code=None):
+    """(font, size factor) for text in this block's font. Chinese, Japanese or Korean the font cannot draw is set in a
+    macOS font of the same weight class, at CJK_SCALE; anything else keeps the block's font at full size."""
+    if not CJK_TEXT.search(text) or has_glyphs(spec, text):
+        return spec, 1.0
+    code = (code or "").lower()
+    lang = ("ko" if code.startswith("ko") or re.search(r"[\uac00-\ud7af]", text) else "ja" if code.startswith("ja") else
+            "zh-HK" if code in ("zh-hk", "zh-mo") else "zh-Hant" if code in ("zh-hant", "zh-tw") else "zh-Hans")
+    weight = weight_class(spec)
+    for faces in CJK_FONTS[lang]:
+        found = resolve_font(faces[weight])
+        if found:
+            return found, CJK_SCALE
+    raise ValueError(f"No font on this computer can set {lang} text. macOS ships PingFang, Hiragino and Apple SD Gothic "
+                     "Neo; add a font that has these characters to config/fonts.txt.")
 
 
 def load_font(spec, size):
@@ -254,27 +324,46 @@ def draw_line(draw, xy, text, font, colour, tracking=0.0, highlights=(), highlig
     return x - start - (tracking if tracking and text else 0)
 
 
+def pieces(text):
+    """The units a line may break between, each with whether a space comes before it: words, and single Chinese or
+    Japanese characters (which need no spaces). Closing punctuation never starts a line, opening never ends one."""
+    out, space = [], False
+    for ch in text.strip():
+        if ch.isspace():
+            space = True
+            continue
+        glue = out and not space and (ch in NO_LINE_START or out[-1][0][-1] in NO_LINE_END or
+                                      not (BREAK_ANYWHERE.match(ch) or BREAK_ANYWHERE.match(out[-1][0][-1])))
+        if glue:
+            out[-1][0] += ch
+        else:
+            out.append([ch, space and bool(out)])
+        space = False
+    return out
+
+
 def wrap(text, font, width, tracking):
     lines, current = [], ""
-    for word in text.split():
-        trial = (current + " " + word).strip()
+    for piece, spaced in pieces(text):
+        trial = current + (" " if spaced and current else "") + piece
         if not current or draw_line(None, (0, 0), trial, font, None, tracking) <= width:
             current = trial
         else:
             lines.append(current)
-            current = word
+            current = piece
     return lines + ([current] if current else [])
 
 
-def match_font(img, line, fonts):
-    """Closest candidate font for one measured line: same text, same ink height, best shape overlap."""
+def match_font(img, line, fonts, brand=()):
+    """Closest candidate font for one measured line: same text, same ink height, best shape overlap. Fonts in `brand`
+    (config/fonts.txt) get BRAND_PREFERENCE added, so a near-tie goes to the brand font."""
     box, mask = line["ink"], line["_mask"]
     if box is None or len(line["text"].replace(" ", "")) < 3:
         return None
     x, y, w, h = box
     lx, ly = line["_rect"][:2]
     src = mask[y - ly:y - ly + h, x - lx:x - lx + w]
-    best = None
+    scored = []
     for spec in fonts:
         try:
             font = load_font(spec, 100)
@@ -299,11 +388,13 @@ def match_font(img, line, fonts):
         crop = Image.fromarray((arr[ys.min():ys.max() + 1, xs.min():xs.max() + 1] * 255).astype(np.uint8)).resize((w, h))
         rendered = np.array(crop) > 127
         iou = (rendered & src).sum() / max(1, (rendered | src).sum())
-        score = iou - 0.1 * abs(tracking) / size
-        if best is None or score > best["score"]:
-            best = {"font": spec, "size": round(size, 2), "tracking": round(tracking if abs(tracking) > 0.01 * size else 0, 2),
-                    "shape_overlap": round(float(iou), 3), "score": float(score)}
-    return best
+        score = iou - 0.1 * abs(tracking) / size + (BRAND_PREFERENCE if spec in brand else 0.0)
+        scored.append({"font": spec, "size": round(size, 2), "tracking": round(tracking if abs(tracking) > 0.01 * size else 0, 2),
+                       "shape_overlap": round(float(iou), 3), "score": float(score)})
+    if not scored:
+        return None
+    scored.sort(key=lambda m: -m["score"])
+    return dict(scored[0], runners_up=[{"font": m["font"], "shape_overlap": m["shape_overlap"]} for m in scored[1:3]])
 
 
 def filled_shape(img, rect, tol=DIFF):
@@ -376,7 +467,7 @@ def detect(image_path, out_path, fonts=None):
     result = subprocess.run(["swift", str(swift), str(image_path)], capture_output=True, text=True, check=True)
     ocr = json.loads(result.stdout)
     img = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.float64)
-    fonts = [f for f in (resolve_font(x) for x in (fonts or DEFAULT_FONTS)) if f]
+    brand, fonts = candidate_fonts(fonts)
     blocks = []
     for n, group in enumerate(group_lines([{"text": l["text"], "rect": l["rect"]} for l in ocr["lines"]]), 1):
         lines = []
@@ -397,7 +488,7 @@ def detect(image_path, out_path, fonts=None):
             continue
         x0, y0 = min(b[0] for b in inks), min(b[1] for b in inks)
         x1, y1 = max(b[0] + b[2] for b in inks), max(b[1] + b[3] for b in inks)
-        matches = [m for m in (match_font(img, l, fonts) for l in lines) if m]
+        matches = [m for m in (match_font(img, l, fonts, brand) for l in lines) if m]
         votes = {}
         for m in matches:
             votes[m["font"]] = votes.get(m["font"], 0) + m["shape_overlap"]
@@ -442,7 +533,9 @@ def detect(image_path, out_path, fonts=None):
             "font": font, "font_size": round(size, 2), "line_pitch": round(pitch, 2),
             "cap_top_offset": round(-font_obj.getbbox("H", anchor="ls")[1], 2),
             "tracking": float(np.median([m["tracking"] for m in sizes])) if sizes else 0.0,
-            "font_match": sizes[0] if sizes else None, "trailing_icon": None, "note": ""})
+            "font_match": sizes[0] if sizes else None,
+            "font_candidates": ([font] + [r["font"] for r in sizes[0]["runners_up"] if r["font"] != font])[:3] if sizes else [font],
+            "trailing_icon": None, "note": ""})
     out = {"tool": "reset_image_text.py", "version": VERSION, "image": str(image_path), "image_sha256": sha256(image_path),
            "size": [int(img.shape[1]), int(img.shape[0])], "ocr_engine": ocr.get("engine"),
            "min_scale": MIN_SCALE, "fonts_considered": fonts, "blocks": blocks,
@@ -476,7 +569,7 @@ def sentence_lines(block, text):
     """When every English line of a block ends a sentence ("Capture it on site." / "It lands in the study."), the
     translation keeps one sentence per line, if it has as many sentences. Otherwise None (normal wrapping)."""
     source = [l["text"].strip() for l in block.get("lines", [])]
-    parts = [t for t in re.split(r"(?<=[.!?])\s+", text.strip()) if t]
+    parts = [t.strip() for t in SENTENCE_END.split(text.strip()) if t.strip()]
     if len(source) > 1 and all(s[-1:] in ".!?" for s in source) and len(parts) == len(source):
         return parts
     return None
@@ -541,6 +634,10 @@ def apply(image_path, boxes_path, translations_path, out_path):
         if block.get("transform") == "upper":  # source set in capitals: keep the style, not the source words
             entry = {k: (v.upper() if k in ("text", "short") and v else v) for k, v in entry.items()}
         block = dict(block, highlight=entry.get("highlight", block.get("highlight", [])))
+        spec, factor = script_font(block["font"], entry["text"], words.get("code"))
+        if spec != block["font"]:  # Chinese, Japanese or Korean the block's font cannot draw
+            block.update(font=spec, font_size=block["font_size"] * factor, tracking=0.0)
+            record["font_fallback"] = f"{Path(spec.split('#')[0]).name}: the original font has no {words.get('language') or ''} characters"
         icon = block.get("trailing_icon")
         if icon:
             text_right = max(l["ink"][0] + l["ink"][2] for l in block["lines"] if l["ink"])
@@ -620,6 +717,44 @@ def apply(image_path, boxes_path, translations_path, out_path):
     return report
 
 
+def font_sheet(image_path, boxes_path, out_path):
+    """Each block's English as it is in the image, next to the same words set in its closest fonts, so a person can
+    pick one by eye. Pin the pick by setting the block's "font" (or noting it in company.md)."""
+    boxes = json.loads(Path(boxes_path).read_text())
+    img = Image.open(image_path).convert("RGB")
+    label = load_font(resolve_font("Arial.ttf") or boxes["fonts_considered"][0], 13)
+    rows = []
+    for block in boxes["blocks"][:8]:
+        line = next((l for l in block["lines"] if l.get("ink")), None)
+        if not line:
+            continue
+        x, y, w, h = grow(line["ink"], 6, (img.height, img.width))
+        tiles = [(img.crop((x, y, x + w, y + h)), "original")]
+        for spec in block.get("font_candidates") or [block["font"]]:
+            font = load_font(spec, block["font_size"])
+            width = int(draw_line(None, (0, 0), line["text"], font, None, block.get("tracking", 0.0))) + 12
+            tile = Image.new("RGB", (width, h), tuple(int(v) for v in np.median(np.asarray(tiles[0][0]).reshape(-1, 3), axis=0)))
+            draw_line(ImageDraw.Draw(tile), (6, line["baseline"] - y if line.get("baseline") else h * 0.8), line["text"], font,
+                      block["colour"], block.get("tracking", 0.0))
+            tiles.append((tile, Path(spec.split("#")[0].split("@")[0]).stem + spec[len(spec.split("#")[0].split("@")[0]):]))
+        rows.append(tiles)
+    if not rows:
+        raise ValueError("No measured text lines in " + str(boxes_path))
+    width = max(sum(t.width + 16 for t, _ in r) for r in rows) + 16
+    height = sum(max(t.height for t, _ in r) + 30 for r in rows) + 16
+    sheet = Image.new("RGB", (width, height), "white")
+    draw, top = ImageDraw.Draw(sheet), 8
+    for r in rows:
+        left = 8
+        for tile, name in r:
+            sheet.paste(tile, (left, top))
+            draw.text((left, top + tile.height + 4), name, font=label, fill=(90, 90, 90))
+            left += tile.width + 16
+        top += max(t.height for t, _ in r) + 30
+    sheet.save(out_path)
+    print(json.dumps({"sheet": str(out_path), "blocks": len(rows)}))
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     try:
@@ -628,6 +763,8 @@ if __name__ == "__main__":
         elif args[:1] == ["detect"] and len(args) in (3, 5):
             fonts = Path(args[4]).read_text().split("\n") if len(args) == 5 and args[3] == "--fonts" else None
             detect(args[1], args[2], [f for f in fonts or [] if f.strip()] or None)
+        elif args[:1] == ["fonts"] and len(args) == 4:
+            font_sheet(*args[1:])
         elif args[:1] == ["apply"] and len(args) == 5:
             apply(*args[1:])
         else:

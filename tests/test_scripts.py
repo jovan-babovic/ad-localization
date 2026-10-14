@@ -366,6 +366,11 @@ class ElevenLabs(unittest.TestCase):
 
 
 class Video(unittest.TestCase):
+    def test_chinese_sentences_end_at_full_width_punctuation(self):
+        self.assertEqual(video.sentences("您好。我们是Acme！准备好了吗？"), ["您好。", "我们是Acme！", "准备好了吗？"])
+        self.assertEqual(video.sentences("他说：“好吗？”然后走了。"), ["他说：“好吗？”", "然后走了。"])
+        self.assertEqual(video.sentences("It is 2.5x faster. Try it!"), ["It is 2.5x faster.", "Try it!"])
+
     def test_voice_must_fit_with_at_most_15_percent_speed_up(self):
         self.assertEqual(video.fit(20, 26, 0.3), 1.0)
         self.assertLessEqual(video.fit(28.7, 26.0, 0.3), 1.15)

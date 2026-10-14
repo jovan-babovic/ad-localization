@@ -20,10 +20,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import LABEL, ROOT, load, now, option as value_of, save, use_venv  # noqa: E402
+from job import LABEL, ROOT, SENTENCE_END, load, now, option as value_of, save, use_venv  # noqa: E402
 
 MAX_TEMPO = 1.15
-SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
 def tools():
@@ -92,7 +91,7 @@ def fit(narration_seconds, video_seconds, start):
 # ---------- sentence alignment ----------
 
 def sentences(text):
-    return [s for s in SENTENCE_END.split(text.strip()) if s]
+    return [s.strip() for s in SENTENCE_END.split(text.strip()) if s.strip()]
 
 
 def speech_spans(path, noise=-40, gap=0.2):
@@ -446,8 +445,12 @@ def cmd_screen(run_dir, name, code):
             record["status"] = "FLAGGED: not one line of text in its box on the reference frame; left in English"
             continue
         english, entry = item["text"], checked["blocks"][item["id"]]
+        if item.get("font"):  # pinned in media-text.json (company.md names the font): never re-matched
+            block["font"] = tool.resolve_font(item["font"]) or item["font"]
         align = item.get("align", block["align"])
         size, tracking = block["font_size"], block.get("tracking", 0.0)
+        tr_spec, tr_factor = tool.script_font(block["font"], entry["text"], code)
+        tr_tracking = tracking if tr_spec == block["font"] else 0.0
         ink = np.array([int(block["colour"][i:i + 2], 16) for i in (1, 3, 5)], dtype=float)
         rect = block["rect"]
         allowed = item.get("max_width", rect[2])
@@ -457,10 +460,11 @@ def cmd_screen(run_dir, name, code):
             return font.getbbox(text[0], anchor="ls")[0], width - font.getlength(text[-1]) + font.getbbox(text[-1], anchor="ls")[2]
 
         ref_font = tool.load_font(block["font"], size)
+        tr_font = tool.load_font(tr_spec, size * tr_factor)
         variant, text, fit_scale = None, None, None
         for key in ("text", "short"):
             if entry.get(key):
-                left, right = ink_extent(entry[key], ref_font, tracking)
+                left, right = ink_extent(entry[key], tr_font, tr_tracking)
                 variant, text, fit_scale = key, entry[key], min(1.0, allowed / max(1.0, right - left))
                 if fit_scale >= tool.MIN_SCALE:
                     break
@@ -543,8 +547,8 @@ def cmd_screen(run_dir, name, code):
             canvas = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
             if visible:
                 k = scale * fit_scale
-                font = tool.load_font(block["font"], size * k)
-                left, right = ink_extent(visible, font, tracking * k)
+                font = tool.load_font(tr_spec, size * tr_factor * k)
+                left, right = ink_extent(visible, font, tr_tracking * k)
                 x = (bx + bw / 2 - (left + right) / 2) if align == "center" else (bx + bw - right) if align == "right" else bx - left
                 cap = -ref_font.getbbox("H", anchor="ls")[1] * scale
                 y = baseline - cap / 2 * (1 - fit_scale)  # smaller type keeps the line's vertical centre
@@ -553,7 +557,7 @@ def cmd_screen(run_dir, name, code):
                     english_at = len(reveal(text, visible[:len(" ".join(visible.split(" ")[:i]))], english, names).split())
                     fade = fades[min(english_at, len(fades) - 1)] if fades else 1.0
                     colour = tuple(int(round(v)) for v in np.clip(bg_colour + min(fade, 1.0) * axis, 0, 255))
-                    x += tool.draw_line(draw, (x, y), word, font, colour, tracking * k) + tracking * k + font.getlength(" ")
+                    x += tool.draw_line(draw, (x, y), word, font, colour, tr_tracking * k) + tr_tracking * k + font.getlength(" ")
             out = frames / "out" / path.name
             out.parent.mkdir(exist_ok=True)
             canvas.save(out)
