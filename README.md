@@ -8,7 +8,7 @@ review. Free and open source.
 Built by [Jovan Babovic](https://www.linkedin.com/in/jovanbabovic/) at
 [Refrain](https://refrain.team/?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=top).
 Read how the test run went in the
-[write-up](https://refrain.team/blog/ad-localization-workflow?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=top).
+[write-up](https://refrain.team/builds/ad-localization-workflow?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=top).
 
 ElevenLabs' paid marketing team is four English-speaking people. They run their ads in seven languages.
 ElevenLabs reports those localized campaigns generated $3.78M in incremental conversion value at a 7.16 ROAS
@@ -22,7 +22,7 @@ affiliated with or endorsed by ElevenLabs. Their results are their own, and this
 In our test, 6 text ads, 2 image ads and 1 video went into French, Spanish and Brazilian Portuguese in 31
 minutes, from a fresh copy of this repo to a finished kit. Claude Code reported $8.87 of Claude usage. ElevenLabs
 used 1,412 credits, about $0.28. You can
-[watch the dubbed videos](https://refrain.team/blog/ad-localization-workflow?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=video#voice)
+[watch the dubbed videos](https://refrain.team/builds/ad-localization-workflow?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=video#voice)
 in the write-up.
 
 Every output is labeled **AI draft, not yet reviewed by a native speaker**. Nothing gets uploaded or published.
@@ -80,7 +80,7 @@ Then, inside Claude Code:
    platform.
 
 Want to see it work first? Type **`/localize example`**. It runs the Field Mode ads from the
-[write-up](https://refrain.team/blog/ad-localization-workflow?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=example):
+[write-up](https://refrain.team/builds/ad-localization-workflow?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=example):
 6 text ads, 2 image ads and 1 video. Your images will use your Mac's fonts, so they won't match the write-up
 exactly.
 
@@ -183,7 +183,7 @@ tests/                        .venv/bin/python -m unittest discover tests
 Jovan Babovic built this at
 [Refrain](https://refrain.team/?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=footer).
 Refrain builds AI systems that take the busywork off B2B marketing teams. The full test run is in the
-[write-up](https://refrain.team/blog/ad-localization-workflow?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=footer).
+[write-up](https://refrain.team/builds/ad-localization-workflow?utm_source=github&utm_medium=readme&utm_campaign=ad-localization&utm_content=footer).
 
 Found a bug or a confusing step? [Open an issue](https://github.com/jovan-babovic/ad-localization/issues).
 Want this running on your team's ads?
