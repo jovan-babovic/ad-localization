@@ -7,8 +7,11 @@
       Lays the recorded translation over the original music, each sentence where the English one starts.
       The picture is copied untouched and the sound is cut to the picture's length.
   python3 scripts/video.py screen output/RUN --video NAME --language fr
-      Replaces on-screen English with the checked translation in every frame it shows, including while it
-      zooms, types in or fades, then reads every changed frame back to check no English is left.
+      Replaces on-screen English with the checked translation in every frame it shows, then reads every
+      changed frame back to check no English is left. A one-line title on a plain background follows its zoom,
+      typing and fade; a block of several lines, or text over a gradient or picture, follows its slide and fade.
+      Only titles, call-outs and small interface text are changed ("kind" in media-text.json). An animated GIF
+      is worked on as the MP4 that prepare made from it.
 """
 import hashlib
 import json
@@ -20,7 +23,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import LABEL, ROOT, SENTENCE_END, load, now, option as value_of, save, use_venv  # noqa: E402
+from job import LABEL, ROOT, SENTENCE_END, TRANSLATED_KINDS, load, now, option as value_of, save, use_venv  # noqa: E402
 
 MAX_TEMPO = 1.15
 
@@ -397,10 +400,442 @@ def ocr_frames(paths):
     return {Path(f["file"]).name: f["lines"] for f in out["frames"]} if "frames" in out else {Path(paths[0]).name: out["lines"]}
 
 
+# ---------- text on screen: blocks that slide and fade ----------
+
+MASK_DIFF = 28   # colour distance from the fitted background that counts as part of a letter
+EDGE = 24        # translated text stays at least this many pixels from the edge of the picture
+ROOM = 1.35      # a translated block may grow to 1.35x the English block's width ("max_width" on the item overrides)
+VISIBLE = 0.05   # share of a block's letters that must be inside the picture to look for it
+
+
+def box(a, r):
+    """Box blur of radius r over both image axes, edges repeated."""
+    import numpy as np
+    for axis in (0, 1):
+        pad = [(0, 0)] * a.ndim
+        pad[axis] = (r + 1, r)
+        c = np.cumsum(np.pad(a, pad, mode="edge"), axis=axis)
+        n = a.shape[axis]
+        a = (np.take(c, np.arange(2 * r + 1, 2 * r + 1 + n), axis=axis) - np.take(c, np.arange(n), axis=axis)) / (2 * r + 1)
+    return a
+
+
+def blur(a, r):
+    return box(box(box(a, r), r), r)
+
+
+def erase_letters(img, mask, r=4, pad=40):
+    """The pixels under mask filled from the pixels around them (normalized convolution), so lines, glows and
+    gradients behind the letters carry on. Nothing outside the mask changes."""
+    import numpy as np
+    if not mask.any():
+        return img
+    ys, xs = np.nonzero(mask)
+    y0, y1, x0, x1 = max(0, ys.min() - pad), ys.max() + pad + 1, max(0, xs.min() - pad), xs.max() + pad + 1
+    part, m = img[y0:y1, x0:x1], mask[y0:y1, x0:x1]
+    out, todo, w = part.copy(), m.copy(), (~m).astype(float)
+    for rr in (r, 2 * r, 4 * r, 8 * r):
+        den, num = blur(w, rr), blur(part * w[..., None], rr)
+        ok = todo & (den > 1e-4)
+        out[ok] = num[ok] / den[ok][:, None]
+        todo &= ~ok
+        if not todo.any():
+            break
+    img = img.copy()
+    img[y0:y1, x0:x1] = out
+    return img
+
+
+def shifted(mask, dx, dy):
+    """A 2-D array moved by whole pixels, zero-filled."""
+    import numpy as np
+    out, (h, w) = np.zeros_like(mask), mask.shape
+    xs, xd = (0, dx) if dx >= 0 else (-dx, 0)
+    ys, yd = (0, dy) if dy >= 0 else (-dy, 0)
+    if w - abs(dx) > 0 and h - abs(dy) > 0:
+        out[yd:yd + h - abs(dy), xd:xd + w - abs(dx)] = mask[ys:ys + h - abs(dy), xs:xs + w - abs(dx)]
+    return out
+
+
+def letter_mask(img, rects, keep=(), pad=3):
+    """The letters' pixels in each line box: further than MASK_DIFF from a colour plane fitted to the ring of pixels
+    around the box (so a gradient is not mistaken for letters), grown by 2 pixels. Boxes in `keep` (a logo inside a
+    line) are left out."""
+    import numpy as np
+    H, W = img.shape[:2]
+    mask = np.zeros((H, W), bool)
+    for x, y, w, h in rects:
+        x0, y0, x1, y1 = max(0, x - pad), max(0, y - pad), min(W, x + w + pad), min(H, y + h + pad)
+        X0, Y0, X1, Y1 = max(0, x0 - 6), max(0, y0 - 6), min(W, x1 + 6), min(H, y1 + 6)
+        yy, xx = np.mgrid[Y0:Y1, X0:X1]
+        ring = ~((yy >= y0) & (yy < y1) & (xx >= x0) & (xx < x1))
+        v = img[Y0:Y1, X0:X1][ring]
+        far = np.linalg.norm(v - np.median(v, axis=0), axis=1)
+        calm = far < np.median(far) + 20  # stray letters from a neighbouring line do not tilt the plane
+        A = np.c_[np.ones(calm.sum()), xx[ring][calm], yy[ring][calm]]
+        coef = np.linalg.lstsq(A, v[calm], rcond=None)[0]
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        plane = coef[0] + xx[..., None] * coef[1] + yy[..., None] * coef[2]
+        mask[y0:y1, x0:x1] |= np.linalg.norm(img[y0:y1, x0:x1] - plane, axis=2) > MASK_DIFF
+    mask = box(mask.astype(float), 2) > 1e-6
+    for x, y, w, h in keep:
+        mask[max(0, y):y + h, max(0, x):x + w] = False
+    return mask
+
+
+def detail(img):
+    """Fine detail of the picture's brightness (what is left after blurring it away), for matching letters."""
+    import numpy as np
+    lum = img @ np.array([0.299, 0.587, 0.114])
+    return (lum - blur(lum, 6)).astype(np.float32)
+
+
+def follow(frame_detail, ref, lo, hi, template, mask):
+    """Where the block is in each frame from lo to hi (dx, dy from the reference frame) and how opaque (0-1),
+    followed out from the reference frame both ways by matching the fine detail of its letters, until it fades out
+    or leaves the picture."""
+    import numpy as np
+    ys, xs = np.nonzero(mask)
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    T = template[y0:y1, x0:x1]
+    norm = float((T ** 2).sum())
+    H, W = mask.shape
+
+    def window(dx, dy):
+        X0, Y0 = x0 + dx, y0 + dy
+        a0, b0, a1, b1 = max(0, -X0), max(0, -Y0), min(x1 - x0, W - X0), min(y1 - y0, H - Y0)
+        return (X0, Y0, a0, b0, a1, b1) if a1 > a0 and b1 > b0 else None
+
+    def score(f, dx, dy, step=1):
+        """Opacity of the block at (dx, dy) in frame f, and the share of it inside the picture."""
+        w = window(dx, dy)
+        if not w:
+            return 0.0, 0.0
+        X0, Y0, a0, b0, a1, b1 = w
+        part = T[b0:b1:step, a0:a1:step]
+        e = float((part ** 2).sum())
+        if e < 1e-6:
+            return 0.0, 0.0
+        return float((part * frame_detail(f)[Y0 + b0:Y0 + b1:step, X0 + a0:X0 + a1:step]).sum()) / e, e * step * step / norm
+
+    def search(f, cx, cy, plan):
+        best = (-1e9, cx, cy)
+        for step, grid, span in plan:
+            cx, cy, best = best[1], best[2], (-1e9, best[1], best[2])
+            for ddy in range(-span, span + 1, grid):
+                for ddx in range(-span, span + 1, grid):
+                    s, seen = score(f, cx + ddx, cy + ddy, step)
+                    if seen > VISIBLE and s > best[0]:
+                        best = (s, cx + ddx, cy + ddy)
+        return best[1], best[2]
+
+    found = {}
+    for direction in (-1, 1):
+        dx = dy = vx = vy = 0
+        alpha, f = 1.0, ref
+        while lo <= f <= hi:
+            px, py = dx + vx, dy + vy
+            seen = score(f, px, py)[1]
+            if seen == 0:
+                break  # slid out of the picture
+            if seen < VISIBLE:  # nearly all outside: keep moving at the same speed
+                dx, dy = px, py
+            else:
+                wide = ((4, 4, 96), (2, 2, 6), (1, 1, 1))
+                plan = ((2, 2, 6), (1, 1, 1)) if alpha < 0.3 else wide if f == ref + direction else ((2, 2, 24), (1, 1, 1))
+                nx, ny = (0, 0) if f == ref else search(f, px, py, plan)
+                a = score(f, nx, ny)[0]
+                if f != ref and alpha >= 0.3 and a < 0.6 * alpha:  # lost it (a repeated frame, then a jump): look wider
+                    wx, wy = search(f, px, py, wide)
+                    if score(f, wx, wy)[0] > a:
+                        nx, ny, a = wx, wy, score(f, wx, wy)[0]
+                if a < 0.04:  # faded out: the last, faintest frames carry on at the same rate until nothing is left
+                    last = [found[g]["alpha"] for g in (f - direction, f - 2 * direction) if g in found]
+                    fade = last[1] - last[0] if len(last) == 2 and last[0] < last[1] else 0.0  # opacity lost per frame
+                    alpha = last[0] if last else 0.0
+                    while fade > 0 and alpha - fade > 0 and lo <= f <= hi:
+                        alpha -= fade
+                        dx, dy = dx + vx, dy + vy
+                        found.setdefault(f, dict(dx=int(dx), dy=int(dy), alpha=round(float(alpha), 3)))
+                        f += direction
+                    break
+                if f != ref:
+                    vx, vy = nx - dx, ny - dy
+                dx, dy, alpha = nx, ny, min(1.0, a)
+            if f not in found:
+                found[f] = dict(dx=int(dx), dy=int(dy), alpha=round(float(alpha), 3))
+            f += direction
+    return found
+
+
+def text_style(img, plate, mask):
+    """The letters' colour, and a highlight colour (left and right end of its gradient) when some words are in a
+    second colour. Every letter pixel is the background behind it (the erased picture) mixed with one of the two
+    ink colours; a pixel belongs to the ink that explains it best, so the soft edges of white letters on blue are
+    not mistaken for a pale highlight. The main colour is the one whose letters cover more of the block."""
+    import numpy as np
+    diff = np.linalg.norm(img - plate, axis=2)
+    top = np.percentile(diff[mask], 98)
+    use = mask & (diff > 0.25 * top)
+    px, bg = img[use], plate[use]
+    ys, xs = np.nonzero(use)
+    strong = px[diff[use] > 0.6 * top]
+    a, c = strong[strong.sum(1).argmin()], strong[strong.sum(1).argmax()]
+    for _ in range(10):  # two colours among the strongest pixels
+        near = np.linalg.norm(strong - a, axis=1) <= np.linalg.norm(strong - c, axis=1)
+        a, c = strong[near].mean(0) if near.any() else a, strong[~near].mean(0) if (~near).any() else c
+    for _ in range(5):
+        fits = []
+        for ink in (a, c):
+            d = ink - bg
+            share = np.clip(((px - bg) * d).sum(1) / np.maximum((d * d).sum(1), 1e-6), 0, 1.2)
+            fits.append((np.linalg.norm(px - bg - share[:, None] * d, axis=1), share))
+        near_a = fits[0][0] <= fits[1][0]
+        core_a, core_c = near_a & (fits[0][1] > 0.8), ~near_a & (fits[1][1] > 0.8)
+        a, c = px[core_a].mean(0) if core_a.any() else a, px[core_c].mean(0) if core_c.any() else c
+    def cover(group):
+        """How many letters are in this colour: separate shapes of solid pixels, after closing gaps of a pixel or two
+        (the speckle of a dithered gradient). Thick bold strokes count no extra, unlike a count of pixels."""
+        from reset_image_text import components
+        if not group.any():
+            return 0
+        y0, x0 = ys[group].min(), xs[group].min()
+        solid = np.zeros((ys[group].max() - y0 + 1, xs[group].max() - x0 + 1), bool)
+        solid[ys[group] - y0, xs[group] - x0] = True
+        solid = box(solid.astype(float), 1) > 0.34  # a pixel with a few solid neighbours joins them
+        return sum(1 for shape in components(solid) if len(shape) >= 15)
+    (main, core_main), (other, core_other) = (((near_a, core_a), (~near_a, core_c)) if cover(core_a) >= cover(core_c)
+                                              else ((~near_a, core_c), (near_a, core_a)))
+    colour = tuple(int(v) for v in px[core_main if core_main.any() else main].mean(0))
+    if not core_other.any() or cover(core_other) < 0.03 * cover(core_main | core_other) or \
+            np.linalg.norm(px[core_main].mean(0) - px[core_other].mean(0)) < 60:
+        return tuple(int(v) for v in strong.mean(0)), None  # one colour: the strongest pixels, free of soft edges
+    hx, hp = xs[core_other], px[core_other]
+    lo, hi = np.percentile(hx, 8), np.percentile(hx, 92)
+    return colour, (tuple(int(v) for v in hp[hx <= lo].mean(0)), tuple(int(v) for v in hp[hx >= hi].mean(0)))
+
+
+def runs(line):
+    """'journey is *unique*' -> [('journey is ', False), ('unique', True)]"""
+    return [(p, i % 2 == 1) for i, p in enumerate(line.split("*")) if p]
+
+
+def draw_runs(canvas, x, y, line, fonts, colour, highlight):
+    """One line at baseline y; highlighted runs in the highlight font, coloured left to right along its gradient."""
+    import numpy as np
+    from PIL import Image, ImageDraw
+    for text, em in runs(line):
+        font = fonts[em]
+        if not em or not highlight:
+            ImageDraw.Draw(canvas).text((x, y), text, font=font, fill=colour + (255,), anchor="ls")
+        else:
+            shape = Image.new("L", canvas.size, 0)
+            ImageDraw.Draw(shape).text((x, y), text, font=font, fill=255, anchor="ls")
+            l, t, r, b = shape.getbbox() or (0, 0, 1, 1)
+            ramp = np.linspace(0, 1, max(1, r - l))[None, :, None]
+            paint = np.zeros((canvas.size[1], canvas.size[0], 3))
+            paint[:, l:r] = np.array(highlight[0]) * (1 - ramp) + np.array(highlight[1]) * ramp
+            layer = Image.fromarray(paint.astype(np.uint8)).convert("RGBA")
+            layer.putalpha(shape)
+            canvas.alpha_composite(layer)
+        x += font.getlength(text)
+    return x
+
+
+def ink_edges(line, fonts):
+    """Left and right ink edge of a line drawn from x=0."""
+    from PIL import Image
+    size = int(max(f.size for f in fonts.values()))
+    width = int(sum(fonts[em].getlength(t) for t, em in runs(line))) + 4 * size
+    canvas = Image.new("RGBA", (width, 3 * size), (0, 0, 0, 0))
+    draw_runs(canvas, 2 * size, 2 * size, line, fonts, (255, 255, 255), None)
+    box = canvas.getchannel("A").getbbox() or (2 * size, 0, 2 * size + 1, 1)
+    return box[0] - 2 * size, box[2] - 2 * size
+
+
+def _place(part, where, shape):
+    """A cut-out (rows y0:y1, columns x0:x1 of a picture) put back at its place in an empty picture of that shape."""
+    import numpy as np
+    y0, y1, x0, x1 = where
+    out = np.zeros(shape, dtype=part.dtype)
+    h, w = min(y1, shape[0]) - y0, min(x1, shape[1]) - x0
+    out[y0:y0 + h, x0:x0 + w] = part[:h, :w]
+    return out
+
+
+def screen_block(item, entry, code, paths, ref_n, found, edits, W, H, fps, ocr_frames_fn):
+    """Redraw one block of on-screen text (one or more lines, any background) in every frame it shows, following
+    how it slides and fades. Returns the record fields. Zoom, rotation and letter-by-letter animation are flagged."""
+    import numpy as np
+    from PIL import Image
+    import reset_image_text as tool
+    from job import joined_lines
+    lines = sorted((l for b in found for l in b["lines"] if overlap(l["ocr_rect"], item["box"]) >= 0.5),
+                   key=lambda l: l["ocr_rect"][1])
+    if not lines:
+        return dict(status="FLAGGED: no text found in its box on the reference frame; left in English")
+    owners = [b for b in found if any(l in lines for l in b["lines"])]
+    font_spec = tool.resolve_font(item["font"]) if item.get("font") else max(owners, key=lambda b: len(b["lines"]))["font"]
+    by_n = {int(p.stem[1:]): p for p in paths}
+    cache = {}
+
+    def frame(n):
+        return np.asarray(Image.open(by_n[n]).convert("RGB"), dtype=np.float64)
+
+    def frame_detail(n):
+        if n not in cache:
+            if len(cache) > 8:
+                cache.pop(next(iter(cache)))
+            cache[n] = detail(frame(n))
+        return cache[n]
+
+    ref = frame(ref_n)
+    mask = letter_mask(ref, [l["ocr_rect"] for l in lines], item.get("keep_boxes", ()))
+    if not mask.any():
+        return dict(status="FLAGGED: the letters could not be told apart from the background; left in English")
+    track = follow(frame_detail, ref_n, min(by_n), max(by_n), detail(ref) * mask, mask)
+    english = item["text"]
+    plate = erase_letters(ref, mask)
+    colour, highlight = text_style(ref, plate, mask)
+    bands = []  # each line's letters: (top row of its box, rows of letter pixels, columns of letter pixels)
+    for l in lines:
+        x, y, w, h = l["ocr_rect"]
+        top, lft = max(0, y - 3), max(0, x - 3)
+        part = mask[top:y + h + 3, lft:x + w + 3]
+        bands.append((top, part.sum(1), np.nonzero(part.any(0))[0] + lft))
+    if not all(rows.any() and len(cols) for _, rows, cols in bands):
+        return dict(status="FLAGGED: a line's letters could not be measured; left in English")
+    baselines = [top + int(np.nonzero(rows > 0.3 * rows.max())[0].max()) + 1 for top, rows, _ in bands]
+    cols = [c for _, _, c in bands]
+    left, right = min(c.min() for c in cols), max(c.max() + 1 for c in cols)
+    centre = float(np.mean([(c.min() + c.max() + 1) / 2 for c in cols]))
+    base = tool.load_font(font_spec, 100)
+    widths = [(c.max() + 1 - c.min(), ink_edges(l["text"], {False: base, True: base})) for c, l in zip(cols, lines)]
+    size = float(np.median([100 * w / max(1, r - l) for w, (l, r) in widths]))
+    pitch = float(np.mean(np.diff(baselines))) if len(baselines) > 1 else 1.2 * size
+    spreads = {"left": np.ptp([c.min() for c in cols]), "right": np.ptp([c.max() for c in cols]),
+               "center": np.ptp([(c.min() + c.max()) / 2 for c in cols])}
+    align = item.get("align") or ("left" if len(cols) == 1 else min(spreads, key=spreads.get))
+
+    if align == "left":
+        margin = W - EDGE - left
+    elif align == "right":
+        margin = right - EDGE
+    else:
+        margin = 2 * (min(centre, W - centre) - EDGE)
+    room = min(item.get("max_width") or ROOM * (right - left), margin)
+    plan = None
+    for key, lines_key in (("text", "lines"), ("short", "short_lines")):
+        if not entry.get(key):
+            continue
+        tr_spec, factor = tool.script_font(font_spec, entry[key], code)
+        em_spec = (tool.script_font(font_spec, entry[key], code, weight="bold")[0] if tr_spec != font_spec
+                   else tool.resolve_font(item["highlight_font"]) if item.get("highlight_font") else tr_spec)
+        fonts = {False: tool.load_font(tr_spec, size * factor), True: tool.load_font(em_spec, size * factor)}
+        layout = entry.get(lines_key) or tool.wrap(entry[key], fonts[False], room, 0.0)
+        if joined_lines(layout).replace(" ", "") != entry[key].replace(" ", ""):
+            return dict(status=f"FLAGGED: the line breaks do not spell out the checked {key}; left in English")
+        edges = [ink_edges(l, fonts) for l in layout]
+        scale = min(1.0, room / max(r - l for l, r in edges))
+        plan = dict(variant=key, layout=layout, tr_spec=tr_spec, em_spec=em_spec, factor=factor, scale=scale)
+        if scale >= tool.MIN_SCALE:
+            break
+    k = plan["scale"] * plan["factor"]
+    fonts = {False: tool.load_font(plan["tr_spec"], size * k), True: tool.load_font(plan["em_spec"], size * k)}
+    layout = plan["layout"]
+    edges = [ink_edges(l, fonts) for l in layout]
+    if len(layout) == len(baselines):
+        ys = baselines
+    else:
+        mid = float(np.mean(baselines))
+        ys = [mid + (i - (len(layout) - 1) / 2) * pitch * plan["scale"] for i in range(len(layout))]
+    sprite = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    for line, (l, r), y in zip(layout, edges, ys):
+        x = left - l if align == "left" else right - r if align == "right" else centre - (l + r) / 2
+        x = min(max(x, EDGE - l), W - EDGE - r)
+        draw_runs(sprite, x, y, line, fonts, colour, highlight)
+    record = dict(engine="block", translation=entry[plan["variant"]], variant=plan["variant"], lines_drawn=layout,
+                  type_size=f"{round(k * 100)}% of the English", colour=tool.hexcolor(colour),
+                  highlight_colours=[tool.hexcolor(c) for c in highlight] if highlight else None,
+                  font=Path(plan["tr_spec"].split("#")[0].split("@")[0]).name)
+    shown = sorted(n for n, t in track.items() if t["alpha"] > 0.01)
+    ys_, xs_ = np.nonzero(mask)
+    reach = (max(0, ys_.min() - 24), ys_.max() + 25, max(0, xs_.min() - 24), xs_.max() + 25)
+
+    def letters(before, after, where):
+        """The detail the erase took away, on the letters' pixels only: the letters as they are in this frame."""
+        y0, y1, x0, x1 = where
+        return (detail(before[y0:y1, x0:x1]) - detail(after[y0:y1, x0:x1])) * shifted_mask[y0:y1, x0:x1]
+
+    shifted_mask = mask
+    own = letters(ref, plate, reach)
+    own_whole, own_energy = _place(own, reach, (H, W)), float((own ** 2).sum())
+    odd, made = [], {}
+    for n in shown:
+        t = track[n]
+        img = np.asarray(Image.open(edits.get(n, by_n[n])).convert("RGB"), dtype=np.float64)
+        shifted_mask = shifted(mask, t["dx"], t["dy"])
+        erased = erase_letters(img, shifted_mask)
+        if t["alpha"] > 0.3:  # the same letters at this strength, or changed shape (a zoom, a turn, letters on their own)?
+            where = (max(0, reach[0] + t["dy"]), max(0, reach[1] + t["dy"]), max(0, reach[2] + t["dx"]), max(0, reach[3] + t["dx"]))
+            seen = letters(img, erased, where)
+            expected = t["alpha"] * shifted(own_whole, t["dx"], t["dy"])[where[0]:where[1], where[2]:where[3]]
+            seen_energy = float((seen ** 2).sum())
+            if seen.shape == expected.shape and seen_energy > 0.1 * own_energy and \
+                    float(((seen - expected) ** 2).sum()) > 0.5 * seen_energy:
+                odd.append(n)
+        img = erased
+        layer = sprite if t["alpha"] >= 0.999 else sprite.copy()
+        if t["alpha"] < 0.999:
+            layer.putalpha(layer.getchannel("A").point(lambda v, a=t["alpha"]: int(v * a)))
+        moved = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        moved.paste(layer, (t["dx"], t["dy"]))
+        canvas = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)).convert("RGBA")
+        canvas.alpha_composite(moved)
+        out = by_n[n].parent / "out" / by_n[n].name
+        out.parent.mkdir(exist_ok=True)
+        canvas.convert("RGB").save(out)
+        made[n] = out
+    if not shown:
+        return dict(status="FLAGGED: the text could not be followed from its reference frame; left in English")
+    if len(odd) >= 3:
+        return dict(status=f"FLAGGED: the text zooms, turns or animates letter by letter around {round(odd[0] / fps, 2)}s "
+                           "(only slides and fades are redrawn); left in English", frames_odd=len(odd))
+    edits.update(made)
+    record.update(frames=[round(shown[0] / fps, 3), round(shown[-1] / fps, 3)], frames_changed=len(shown))
+    # English still showing in a frame this tool did not change: it moved in a way that could not be followed.
+    english_only = {w.strip(".,:;!?¿¡").lower() for w in english.split()} - {
+        w.strip(".,:;!?¿¡").lower() for w in record["translation"].replace("*", "").split()}
+    untouched = [by_n[n] for n in sorted(by_n) if n not in edits]
+    grown = [item["box"][0] - item["box"][2] // 2, item["box"][1] - item["box"][3] // 2, item["box"][2] * 2, item["box"][3] * 2]
+    left_over = sorted(name for name, found_lines in (ocr_frames_fn(untouched).items() if untouched else [])
+                       for l in found_lines if overlap(l["rect"], grown) > 0.3
+                       and english_only & {w.strip(".,:;!?¿¡").lower() for w in l["text"].split()})
+    if left_over:
+        record["status"] = (f"FLAGGED: English still shows in {len(set(left_over))} frame(s) the tool could not follow "
+                            f"(first: {sorted(set(left_over))[0]}); check the start and end of this text")
+    elif plan["scale"] < tool.MIN_SCALE:
+        record["status"] = f"FLAGGED: set at {round(plan['scale'] * 100)}% type size to fit; needs shorter copy"
+    else:
+        record["status"] = "replaced in every frame it shows"
+    return record
+
+
+def plain_around(img, box, pad=12):
+    """True when the ring of pixels just outside the box is one flat colour (a card, a plain title background)."""
+    import numpy as np
+    x, y, w, h = box
+    H, W = img.shape[:2]
+    x0, y0, x1, y1 = max(0, x - pad), max(0, y - pad), min(W - 1, x + w + pad), min(H - 1, y + h + pad)
+    ring = np.concatenate([img[y0, x0:x1], img[y1, x0:x1], img[y0:y1, x0], img[y0:y1, x1]])
+    return float(np.abs(ring - np.median(ring, axis=0)).mean()) <= 8
+
+
 def cmd_screen(run_dir, name, code):
-    """Every frame the English shows in is re-drawn in the target language with the same size, place, letters
-    shown and fade, measured on that frame. Works for one-line text on a plain background (titles, cards);
-    text over footage is flagged and left alone."""
+    """Every frame the English shows in is re-drawn in the target language. One line on a plain background (a title
+    card) follows its size, place, letters shown and fade, measured on each frame. Several lines, or text over a
+    gradient or picture, are followed as one block as they slide and fade. Dashboards, logos and footage text are
+    never changed; zooms and turns of a block are flagged and left alone."""
     import numpy as np
     from PIL import Image, ImageDraw
     import reset_image_text as tool
@@ -410,7 +845,7 @@ def cmd_screen(run_dir, name, code):
     if not items:
         raise SystemExit(f"No on-screen text items for {name} in media-text.json.")
     for item in items:
-        if not all(k in item for k in ("start", "end", "box")):
+        if item.get("kind", "title") in TRANSLATED_KINDS and not all(k in item for k in ("start", "end", "box")):
             raise SystemExit(f"Screen item {item.get('id')} needs start, end and box [x, y, w, h].")
     source = source_video(run_dir, name)
     info = probe(source)
@@ -429,17 +864,28 @@ def cmd_screen(run_dir, name, code):
     for item in items:
         record = dict(id=item["id"], text=item["text"])
         records.append(record)
+        if item.get("kind", "title") not in TRANSLATED_KINDS:
+            record["status"] = f"left as in the original ({item['kind']}: never translated)"
+            continue
         f0, f1 = max(0, int((item["start"] - 0.5) * fps)), min(total - 1, int(math.ceil((item["end"] + 0.5) * fps)))
         frames = work / item["id"]
         frames.mkdir()
         run(["ffmpeg", "-nostdin", "-v", "error", "-i", source, "-vf", f"select='between(n\\,{f0}\\,{f1})'", "-fps_mode",
              "passthrough", "-start_number", f0, "-frames:v", f1 - f0 + 1, frames / "f%05d.png"])
         paths = sorted(frames.glob("f*.png"))
-        ocr = ocr_frames(paths)
         ref_n = min(max(int(round(item.get("frame", (item["start"] + item["end"]) / 2) * fps)), f0), f1)
         boxes = work / f"{item['id']}.boxes.json"
         tool.detect(frames / f"f{ref_n:05d}.png", boxes, [l for l in fonts.read_text().splitlines() if l.strip()] if fonts.exists() else None)
         found = load(boxes)["blocks"]
+        in_box = [l for b in found for l in b["lines"] if overlap(l.get("ocr_rect") or b["rect"], item["box"]) >= 0.5]
+        ref_img = np.asarray(Image.open(frames / f"f{ref_n:05d}.png").convert("RGB"), dtype=np.float64)
+        engine = item.get("engine") or ("line" if len(in_box) == 1 and plain_around(ref_img, item["box"]) else "block")
+        if engine == "block":  # several lines, or a gradient or picture behind: follow the block as it slides and fades
+            record.update(screen_block(item, checked["blocks"][item["id"]], code, paths, ref_n, found, edits, W, H, fps,
+                                       ocr_frames))
+            continue
+        record["engine"] = "line"  # one line on a plain background: follows zoom, typing and fade
+        ocr = ocr_frames(paths)
         block = max(found, key=lambda b: overlap(b["rect"], item["box"])) if found else None
         if not block or overlap(block["rect"], item["box"]) < 0.3 or len(block["lines"]) != 1:
             record["status"] = "FLAGGED: not one line of text in its box on the reference frame; left in English"
@@ -615,11 +1061,20 @@ def cmd_screen(run_dir, name, code):
                           frames_changed=len(edits), flagged=record["flagged"]), ensure_ascii=False))
 
 
+GIF_RATE = "30000/1001"  # an animated GIF becomes a 29.97 fps MP4: LinkedIn video ads take "less than 30 FPS"
+
+
 def source_video(run_dir, name):
+    """The video to work from: the input file, or for an animated GIF the MP4 that prepare made from it."""
     data = load(Path(run_dir) / "lines.json")
     matches = [Path(data["input"]) / v for v in data["media"]["videos"] if Path(v).stem == name]
     if len(matches) != 1:
         raise SystemExit(f"Video {name} is not in this run's input folder.")
+    if matches[0].suffix.lower() == ".gif":
+        made = Path(run_dir) / "video" / name / "source.mp4"
+        if not made.exists():
+            raise SystemExit(f"Run first: python3 scripts/video.py prepare {run_dir} {matches[0]}")
+        return made
     return matches[0]
 
 
@@ -630,6 +1085,12 @@ def cmd_prepare(run_dir, video, every):
     folder = Path(run_dir) / "video" / video.stem
     frames = folder / "frames"
     frames.mkdir(parents=True, exist_ok=True)
+    original = video
+    if video.suffix.lower() == ".gif":  # silent MP4, same picture and timing, for every later step and as the output
+        run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", video, "-vf",
+             f"fps={GIF_RATE},scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p", "-c:v", "libx264", "-crf", "16",
+             "-preset", "medium", "-an", "-movflags", "+faststart", folder / "source.mp4"])
+        video = folder / "source.mp4"
     info = probe(video)
     if info["has_audio"]:
         run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", video, "-vn", "-ac", "2", "-ar", "44100", "-b:a", "192k",
@@ -641,17 +1102,24 @@ def cmd_prepare(run_dir, video, every):
     for t in times:
         run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", t, "-i", video, "-frames:v", "1",
              "-vf", "scale='min(1280,iw)':-2", "-q:v", "3", frames / f"t{t:07.2f}.jpg"])
-    transcript = video.with_name(video.stem + ".transcript.txt")
+    transcript = original.with_name(original.stem + ".transcript.txt")
     if transcript.exists():
         shutil.copy2(transcript, folder / "transcript.txt")
-    record = dict(prepared_at=now(), video=video.name, **info, frames_every_seconds=every,
+    record = dict(prepared_at=now(), video=original.name, **info, frames_every_seconds=every,
                   frames=[f"frames/t{t:07.2f}.jpg" for t in times],
                   transcript="transcript.txt" if transcript.exists() else None,
-                  sha256=hashlib.sha256(video.read_bytes()).hexdigest())
+                  sha256=hashlib.sha256(original.read_bytes()).hexdigest())
+    if original != video:
+        record.update(from_gif=True, works_on="source.mp4", note=(
+            "Animated GIF: turned into a silent MP4 at 29.97 fps. The translated version comes out as an MP4 (LinkedIn "
+            "image ads take GIFs up to 5 MB; video ads take MP4)." + (" Shorter than 3 seconds: LinkedIn video ads need "
+                                                                     "at least 3." if info["picture_seconds"] < 3 else "")))
     save(folder / "video.json", record)
     print(json.dumps(dict(folder=str(folder), duration=info["duration"], size=f"{info['width']}x{info['height']}",
-                          has_audio=info["has_audio"], frames=len(times), transcript=record["transcript"] or
-                          "none: write input/<name>.transcript.txt or run voice.py transcribe (paid)"), indent=1))
+                          has_audio=info["has_audio"], frames=len(times), transcript=record["transcript"] or (
+                              "none needed: no sound" if not info["has_audio"] else
+                              "none: write input/<name>.transcript.txt or run voice.py transcribe (paid)"),
+                          **({"note": record["note"]} if record.get("note") else {})), indent=1))
 
 
 def main(argv):

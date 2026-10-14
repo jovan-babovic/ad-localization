@@ -121,15 +121,15 @@ def has_glyphs(spec, text):
     return not any(drawn(ch) == missing for ch in set(CJK_TEXT.findall(text)))
 
 
-def script_font(spec, text, code=None):
+def script_font(spec, text, code=None, weight=None):
     """(font, size factor) for text in this block's font. Chinese, Japanese or Korean the font cannot draw is set in a
-    macOS font of the same weight class, at CJK_SCALE; anything else keeps the block's font at full size."""
+    macOS font of the same weight class (or `weight`), at CJK_SCALE; anything else keeps the block's font at full size."""
     if not CJK_TEXT.search(text) or has_glyphs(spec, text):
         return spec, 1.0
     code = (code or "").lower()
     lang = ("ko" if code.startswith("ko") or re.search(r"[\uac00-\ud7af]", text) else "ja" if code.startswith("ja") else
             "zh-HK" if code in ("zh-hk", "zh-mo") else "zh-Hant" if code in ("zh-hant", "zh-tw") else "zh-Hans")
-    weight = weight_class(spec)
+    weight = weight or weight_class(spec)
     for faces in CJK_FONTS[lang]:
         found = resolve_font(faces[weight])
         if found:

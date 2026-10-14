@@ -467,6 +467,103 @@ class Video(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
+class ScreenBlocks(unittest.TestCase):
+    """A two-line title with one highlighted word, over a gradient: it slides in, holds and fades out. The block tool
+    must replace it in every frame, leave the gradient clean where the English was, and keep every frame. The same
+    title zooming in must be flagged and left alone."""
+    W, H, N = 320, 200, 30
+
+    def gradient(self):
+        import numpy as np
+        x = np.linspace(0, 1, self.W)[None, :, None]
+        return np.broadcast_to(np.array([20, 40, 90]) * (1 - x) + np.array([10, 90, 170]) * x, (self.H, self.W, 3)).copy()
+
+    def make(self, tmp, zoom=False):
+        import numpy as np
+        from PIL import Image, ImageDraw
+        import reset_image_text as tool
+        font = next((f for f in map(tool.resolve_font, ("HelveticaNeue.ttc#0", "Arial.ttf")) if f), None)
+        if not font:
+            self.skipTest("no default font installed")
+        (tmp / "frames").mkdir()
+        lines = [((40, 80), "Every team", (240, 240, 240)), ((40, 116), "is unique", None)]
+        for n in range(self.N):
+            dx = -int(12 * (8 - n) ** 1.5) if n < 8 else 0  # slides in from the left, slowing down
+            alpha = 1.0 if n < 21 else max(0.0, 1 - (n - 20) / 8)  # then fades out
+            k = 1 + 0.04 * n if zoom else 1.0
+            frame = Image.fromarray(self.gradient().astype(np.uint8)).convert("RGBA")
+            layer = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(layer)
+            face = tool.load_font(font, 28 * k)
+            for (x, y), text, colour in lines:
+                if colour:
+                    draw.text((x + dx, y), text, font=face, fill=colour + (255,), anchor="ls")
+                else:
+                    draw.text((x + dx, y), "is ", font=face, fill=(240, 240, 240, 255), anchor="ls")
+                    draw.text((x + dx + face.getlength("is "), y), "unique", font=face, fill=(90, 200, 250, 255), anchor="ls")
+            layer.putalpha(layer.getchannel("A").point(lambda v: int(v * alpha)))
+            frame.alpha_composite(layer)
+            frame.convert("RGB").save(tmp / "frames" / f"f{n:03d}.png")
+        (tmp / "input").mkdir()
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-framerate", "10", "-i", str(tmp / "frames" / "f%03d.png"),
+                        "-c:v", "libx264", "-crf", "10", "-pix_fmt", "yuv420p", str(tmp / "input" / "title.mp4")], check=True)
+        run = make_run(tmp, [("A", "google", "headline", "Hi")])
+        write(run / "media-text.json", {"items": [{"id": "title.s1", "file": "title.mp4", "surface": "screen", "kind": "title",
+                                                   "text": "Every team is unique", "start": 0.0, "end": 2.9, "frame": 1.5,
+                                                   "box": [36, 52, 170, 74]}]})
+        job.save(run / "lines.json", job.build_lines(job.read_config(tmp / "config")[0], tmp / "input", run))
+        rows = draft_all(run, lambda l: "Tous uniques" if l["text"].startswith("Every") else "Salut")
+        for row in rows:
+            if row["translation"].startswith("Tous"):
+                row["lines"] = ["Tous", "*uniques*"]
+        job.save(run / "drafts.json", {"translations": rows})
+        ink = [{"text": "Every team", "ocr_rect": [38, 58, 150, 30]}, {"text": "is unique", "ocr_rect": [38, 94, 130, 30]}]
+        block = dict(rect=[38, 58, 150, 66], lines=ink, align="left", font=font, font_size=28.0, tracking=0.0, colour="#f0f0f0")
+        with mock.patch("sys.stdout"), mock.patch.object(video, "ocr_frames", lambda paths: {}), \
+                mock.patch.object(tool, "detect", lambda image, out, fonts: job.save(out, {"blocks": [block]})):
+            video.cmd_screen(run, "title", "fr")
+        return run, job.load(run / "video" / "title" / "fr" / "screen.json")["items"][0]
+
+    def test_a_block_that_slides_and_fades_is_replaced_and_erased_cleanly(self):
+        try:
+            import numpy as np
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow and numpy are not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            run, record = self.make(Path(tmp))
+            self.assertEqual(record["status"], "replaced in every frame it shows", record)
+            self.assertEqual(record["engine"], "block")
+            self.assertIsNotNone(record["highlight_colours"])
+            out = run / "video" / "title" / "fr" / "localized.mp4"
+            frames = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-show_entries", "stream=nb_read_frames",
+                                     "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout.strip()
+            self.assertEqual(int(frames), self.N)
+            held = np.asarray(Image.open(run / "video/title/fr/screen/title.s1/out/f00015.png").convert("RGB"), dtype=float)
+            # right of the short French first line ("Tous"), where only English was: back to the gradient
+            gap = np.abs(held[58:88, 125:180] - self.gradient()[58:88, 125:180]).mean()
+            self.assertLess(gap, 6, gap)
+            last = Path(tmp) / "last.png"  # faded out by the end: the finished video's last frame is the plain gradient
+            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(out), "-vf", f"select=eq(n\\,{self.N - 1})",
+                            "-frames:v", "1", str(last)], check=True)
+            gone = np.asarray(Image.open(last).convert("RGB"), dtype=float)
+            self.assertLess(np.abs(gone[50:130, 30:220] - self.gradient()[50:130, 30:220]).mean(), 6)
+
+    def test_a_zooming_block_is_flagged_and_left_alone(self):
+        try:
+            import numpy  # noqa: F401
+        except ImportError:
+            self.skipTest("numpy is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                _, record = self.make(Path(tmp), zoom=True)
+            except SystemExit as stop:  # nothing could be replaced: the video is not written at all
+                self.assertIn("No on-screen text could be replaced", str(stop))
+                return
+            self.assertTrue(record["status"].startswith("FLAGGED"), record["status"])
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
 class DubCuts(unittest.TestCase):
     """Two spoken sentences (tones) with a 0.1 s pause, and character timings that put the planned cuts inside the sound,
     like a fast stock voice that barely pauses. Every cut must land in silence (+-30 ms clear of sound), or stop."""

@@ -37,6 +37,11 @@ SURFACE_FIELDS = {"image": "image_text", "spoken": "script", "screen": "screen_t
 # Where one sentence ends and the next begins: . ! ? … before a space, or Chinese and Japanese 。！？ (no space after them;
 # a closing quote right after one stays with its sentence).
 SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|(?<=[。！？])(?![”』」）])\s*|(?<=[。！？][”』」）])\s*")
+# Text on screen by kind (media-text.json "kind"). Only titles, call-outs and small interface elements (a typed prompt,
+# a floating card, a chip, a toast) are translated. Dashboards, logos and text over footage stay as they are.
+TRANSLATED_KINDS = ("title", "callout", "ui-small")
+SCREEN_KINDS = TRANSLATED_KINDS + ("dashboard", "logo", "footage")
+CJK_BOUNDARY = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
 LONGER_THAN_ENGLISH = 1.2  # an English text already over the recommended length: flag a draft only past 20% longer
 
 
@@ -184,8 +189,59 @@ def normal_field(value):
     return FIELD_ALIASES.get(value, value)
 
 
+def gif_frames(path):
+    """How many pictures a GIF holds (1 = a still image), read from its blocks without any add-on."""
+    data, frames = Path(path).read_bytes(), 0
+    if data[:3] != b"GIF":
+        raise ValueError(f"{Path(path).name} is not a GIF.")
+    pos = 13 + (3 << ((data[10] & 7) + 1) if data[10] & 0x80 else 0)
+    while pos < len(data) and data[pos] != 0x3B:
+        if data[pos] == 0x2C:  # an image: descriptor, optional colour table, then data sub-blocks
+            frames += 1
+            flags = data[pos + 9]
+            pos += 10 + (3 << ((flags & 7) + 1) if flags & 0x80 else 0) + 1
+        elif data[pos] == 0x21:  # an extension: label, then sub-blocks
+            pos += 2
+        else:
+            break
+        while pos < len(data) and data[pos]:
+            pos += data[pos] + 1
+        pos += 1
+    return frames
+
+
+def media_kind(path):
+    """image or video by file type; a GIF with one picture is an image, an animated one a (silent) video."""
+    suffix = path.suffix.lower()
+    if suffix == ".gif":
+        return "image" if gif_frames(path) <= 1 else "video"
+    return "image" if suffix in IMAGE_TYPES else "video" if suffix in VIDEO_TYPES else None
+
+
+def joined_lines(lines):
+    """The text that per-language line breaks spell out: lines joined by a space, except after a hyphen or between
+    Chinese or Japanese characters. *Highlight* marks are dropped."""
+    out = ""
+    for line in (l.replace("*", "") for l in lines):
+        tight = not out or out.endswith("-") or CJK_BOUNDARY.match(out[-1]) or CJK_BOUNDARY.match(line[:1] or " ")
+        out += line if tight else " " + line
+    return out
+
+
+def same_wording(a, b):
+    """Equal, ignoring spaces next to Chinese or Japanese characters ("AI 转型" and "AI转型" are the same)."""
+    tight = lambda t: re.sub(r"\s+(?=" + CJK_BOUNDARY.pattern + r")|(?<=" + CJK_BOUNDARY.pattern + r")\s+", "", t.strip())  # noqa: E731
+    return tight(a) == tight(b)
+
+
+def truncated(text):
+    """Text cut short by an ad library or a screenshot ends in '...' or '…'."""
+    return text.rstrip().endswith(("...", "…"))
+
+
 def read_text_ads(path):
-    """CSV or JSON rows with ad, platform, field, text. Extra columns are ignored."""
+    """CSV or JSON rows with ad, platform, field, text, and optionally source (the ad's URL). Other columns are
+    ignored."""
     if path.suffix.lower() == ".csv":
         with path.open(newline="", encoding="utf-8-sig") as handle:
             rows = list(csv.DictReader(handle))
@@ -201,7 +257,8 @@ def read_text_ads(path):
         if missing:
             raise ValueError(f"{path.name} row {n}: missing {', '.join(missing)}.")
         out.append(dict(ad=str(row["ad"]), platform=normal_platform(row["platform"]),
-                        field=normal_field(row["field"]), text=str(row["text"]), file=path.name))
+                        field=normal_field(row["field"]), text=str(row["text"]), file=path.name,
+                        source=str(row.get("source") or "")))
     return out
 
 
@@ -257,6 +314,10 @@ def build_lines(config, input_dir, run_dir, languages=None):
     for n, item in enumerate(media_items, 1):
         if item.get("surface") not in SURFACE_FIELDS or not str(item.get("text", "")).strip() or not item.get("file"):
             raise ValueError(f"media-text.json item {n}: needs file, surface (image, spoken or screen) and text.")
+        if item["surface"] == "screen" and item.get("kind", "title") not in SCREEN_KINDS:
+            raise ValueError(f"media-text.json item {n}: kind must be one of {', '.join(SCREEN_KINDS)}.")
+        if item["surface"] == "screen" and item.get("kind", "title") not in TRANSLATED_KINDS:
+            continue  # recorded as seen, never translated
         rows.append(dict(ad=Path(item["file"]).stem, platform="image" if item["surface"] == "image" else "video",
                          field=SURFACE_FIELDS[item["surface"]], text=item["text"].strip(), file=Path(item["file"]).name,
                          media_id=item.get("id"), surface=item["surface"], budget=layout_budget(item, run_dir)))
@@ -274,7 +335,8 @@ def build_lines(config, input_dir, run_dir, languages=None):
             limit.update(recommended=row["budget"], note=f"About {row['budget']} characters fit this box at 85% type size "
                          "(estimated from the English). The image tool flags text that still overflows.")
         fields.append(dict(id=row.get("media_id") or field_id, ad=row["ad"], platform=row["platform"], field=row["field"],
-                           surface=row.get("surface", "ad"), text=row["text"], file=row["file"], names=names, limit=limit))
+                           surface=row.get("surface", "ad"), text=row["text"], file=row["file"], names=names, limit=limit,
+                           **({"source": row["source"]} if row.get("source") else {})))
     if len({f["id"] for f in fields}) != len(fields):
         raise ValueError("Two texts share the same id. Give every media-text.json item its own id.")
     lines = {}
@@ -290,9 +352,10 @@ def build_lines(config, input_dir, run_dir, languages=None):
                                   field=field["field"], surface=field["surface"], limit=field["limit"],
                                   names=field["names"], field_ids=[])
             lines[key]["field_ids"].append(field["id"])
-    media = dict(images=[p.name for p in files if p.suffix.lower() in IMAGE_TYPES],
-                 videos=[p.name for p in files if p.suffix.lower() in VIDEO_TYPES])
-    return dict(label=LABEL, built_at=now(), config=config["folder"], input=str(input_dir),
+    media = dict(images=[p.name for p in files if media_kind(p) == "image"],
+                 videos=[p.name for p in files if media_kind(p) == "video"])
+    cut = [f"{f['ad']} {f['field']}: \"…{f['text'][-40:]}\"" for f in fields if truncated(f["text"])]
+    return dict(label=LABEL, built_at=now(), config=config["folder"], input=str(input_dir), truncated=cut,
                 source_language=config["source_language"], markets=markets, never_translate=config["never_translate"],
                 names_in_context=config.get("names_in_context", []), fields=fields, lines=list(lines.values()), media=media)
 
@@ -336,6 +399,9 @@ def prepare(args):
     if data["media"]["images"]:
         (run_dir / "images").mkdir(exist_ok=True)  # the image tool writes here and will not create folders
     save(run_dir / "lines.json", data)
+    if data["truncated"]:
+        warnings.append(f"{len(data['truncated'])} text(s) end in '...' and may be cut short (ad libraries shorten long "
+                        "text). Paste the full text before translating: " + "; ".join(data["truncated"]))
     print(json.dumps(dict(run=str(run_dir.relative_to(ROOT)), languages=[m["code"] for m in data["markets"]],
                           text_fields=len(data["fields"]), lines_to_translate=len(data["lines"]),
                           images=data["media"]["images"], videos=data["media"]["videos"],
@@ -421,6 +487,11 @@ def check(run_dir):
                      variant=variant, **refs)
             variants.append(dict(line_id=key[0], language=key[1], variant=variant, text=value, characters=count,
                                  limit=limit, result=result))
+        for breaks, value in (("lines", row.get("translation")), ("short_lines", short)):
+            given = row.get(breaks)
+            if given is not None and (not isinstance(given, list) or not same_wording(joined_lines(given), str(value or ""))):
+                flag("lines_differ", "error", f"\"{breaks}\" must spell out the {'short version' if breaks == 'short_lines' else 'translation'} "
+                     f"exactly (joined: \"{joined_lines(given) if isinstance(given, list) else given}\").", **refs)
         if short is not None and note:
             flag("shortened", "review", "Shortened version leaves out: " + str(note), variant="short", **refs)
         if row.get("review_note"):
@@ -493,6 +564,9 @@ def words(run_dir, name, code, surface=None):
         entry = {"text": row["translation"]}
         if row.get("short_version"):
             entry["short"] = row["short_version"]
+        for key in ("lines", "short_lines"):  # line breaks and *highlights* for text on screen
+            if row.get(key):
+                entry[key] = row[key]
         blocks[item.get("block") or item["id"]] = entry
     if not blocks:
         raise SystemExit(f"No text items for {name} in media-text.json.")
