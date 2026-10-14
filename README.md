@@ -134,4 +134,4 @@ tests/                     .venv/bin/python -m unittest discover tests
 
 ## Credits
 
-Built by Jovan Babovic at [Refrain](https://refrain.team). MIT license.
+Built by Jovan Babovic at [Refrain](https://refrain.team). The code is MIT licensed ([LICENSE](LICENSE)); the example ads in `examples/input/` belong to PropFusion and are not ([examples/README.md](examples/README.md)).
