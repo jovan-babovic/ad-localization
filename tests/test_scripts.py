@@ -383,7 +383,7 @@ class Video(unittest.TestCase):
             folder = run / "video" / "clip"
             (folder / "fr").mkdir(parents=True)
             (folder / "stems").mkdir()
-            gen("-f", "lavfi", "-i", "sine=f=440:duration=1", folder / "fr" / "narration.mp3")
+            gen("-f", "lavfi", "-i", "sine=f=440:duration=1", folder / "fr" / "narration.wav")
             gen("-f", "lavfi", "-i", "sine=f=330:duration=2.3", folder / "stems" / "instrumental.mp3")
             write(folder / "fr" / "script.txt", "Bonjour.")
             info = video.probe(tmp / "input" / "clip.mp4")
@@ -392,6 +392,40 @@ class Video(unittest.TestCase):
                 video.cmd_dub(run, "clip", "fr", 1.0, "")
             made = video.probe(folder / "fr" / "dubbed.mp4")
             self.assertLessEqual(made["duration"], info["picture_seconds"] + 1 / 30 + 1e-3)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")
+    def test_screen_title_away_from_the_left_edge_is_replaced(self):
+        try:
+            from PIL import Image, ImageDraw
+            import reset_image_text as tool
+        except ImportError:
+            self.skipTest("Pillow and numpy are not installed (only needed for image and on-screen text)")
+        font = next((f for f in map(tool.resolve_font, tool.DEFAULT_FONTS) if f), None)
+        if not font:
+            self.skipTest("none of the default fonts is installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            card = Image.new("RGB", (320, 180), "white")  # a short title in the middle: its search box starts far from x=0
+            draw, face = ImageDraw.Draw(card), tool.load_font(font, 28)
+            draw.text((160, 100), "Try it", font=face, fill=(20, 20, 20), anchor="ms")
+            x0, y0, x1, y1 = (int(v) for v in draw.textbbox((160, 100), "Try it", font=face, anchor="ms"))
+            rect = [x0, y0, x1 - x0, y1 - y0]
+            card.save(tmp / "card.png")
+            (tmp / "input").mkdir()
+            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-loop", "1", "-i", str(tmp / "card.png"), "-t", "1", "-r", "10",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(tmp / "input" / "clip.mp4")], check=True)
+            run = make_run(tmp, [("A", "google", "headline", "Hi")])
+            write(run / "media-text.json", {"items": [{"id": "clip.s1", "file": "clip.mp4", "surface": "screen", "text": "Try it",
+                                                       "start": 0.2, "end": 0.8, "box": rect, "max_width": 300}]})
+            job.save(run / "lines.json", job.build_lines(job.read_config(tmp / "config")[0], tmp / "input", run))
+            draft_all(run, lambda l: "Essayez" if l["text"] == "Try it" else "Salut")
+            block = dict(rect=rect, lines=[{"text": "Try it"}], align="center", font=font, font_size=28.0, tracking=0.0, colour="#141414")
+            ocr = lambda paths: {Path(p).name: [{"text": "Try it", "rect": rect}] for p in paths if Path(p).parent.name != "out"}  # noqa: E731
+            with mock.patch("sys.stdout"), mock.patch.object(video, "ocr_frames", ocr), \
+                    mock.patch.object(tool, "detect", lambda image, out, fonts: job.save(out, {"blocks": [block]})):
+                video.cmd_screen(run, "clip", "fr")
+            self.assertEqual(job.load(run / "video" / "clip" / "fr" / "screen.json")["items"][0]["status"],
+                             "replaced in every frame it shows")
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg not installed")

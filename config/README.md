@@ -1,6 +1,6 @@
 # Your company setup
 
-`/setup` writes three files here:
+`/setup` writes these files here:
 
 - `company.md`: who you are, who buys, your voice, and the claims that need care.
 - `markets.json`: the languages and markets, how to address the reader (for example "vous" or "tú"), the tone,

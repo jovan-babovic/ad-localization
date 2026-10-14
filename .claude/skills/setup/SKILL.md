@@ -17,12 +17,12 @@ Never ask for an API key.
 Run `which python3 ffmpeg ffprobe claude swift` and `python3 --version`. If `.venv/` exists, also run
 `.venv/bin/python -c "import PIL, numpy"`.
 Tell the person, in one or two lines:
-- Python must be 3.11 or newer (https://www.python.org/downloads/).
+- Python must be 3.9 or newer; the `python3` that comes with macOS works (https://www.python.org/downloads/).
 - Image ads and text on screen in videos need a Mac (text detection uses Apple's built-in OCR through `swift`) and
-  Pillow plus numpy in this folder's own Python environment. If `.venv/` is missing, offer to make it (free, about a
+  Pillow plus NumPy in this folder's own Python environment. If `.venv/` is missing, offer to make it (free, about a
   minute): `python3 -m venv .venv`, then `.venv/bin/pip install -r requirements.txt`. The scripts use `.venv`
   by themselves once it exists; every command stays `python3 scripts/...`.
-- ffmpeg is only needed for video ads (https://ffmpeg.org/download.html; on a Mac with Homebrew: `brew install ffmpeg`).
+- FFmpeg is only needed for video ads (https://ffmpeg.org/download.html; on a Mac with Homebrew: `brew install ffmpeg`).
 Missing tools do not stop the setup; just say what will not work until they are installed.
 
 ## 1. Start
@@ -70,7 +70,7 @@ Otherwise ask: **"Set up your own company now, or first watch it work on a sampl
 
    If they paste a key into the chat anyway, tell them to delete that key in ElevenLabs and make a new one.
 
-## 3. Write the three files
+## 3. Write the files
 
 `config/company.md`:
 

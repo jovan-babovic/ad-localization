@@ -1,15 +1,15 @@
 """Erase the English text boxes on a flat ad image and set translations in the same boxes.
 
-  python3 reset_image_text.py detect IMAGE NEW_BOXES.json [--fonts FONTS.txt]
-  python3 reset_image_text.py apply IMAGE BOXES.json TRANSLATIONS.json NEW_OUT.png
+  python3 scripts/reset_image_text.py detect IMAGE NEW_BOXES.json [--fonts FONTS.txt]
+  python3 scripts/reset_image_text.py apply IMAGE BOXES.json TRANSLATIONS.json NEW_OUT.png
 
 detect  reads the text lines (Apple Vision via ocr_lines.swift, macOS), groups them into blocks and
-        measures each block: ink box, text colour(s), closest available font, size, line pitch,
+        measures each block: ink box, text color(s), closest available font, size, line pitch,
         letter spacing and alignment. Every block starts as "action": "review"; a person or an AI
         sets each one to "replace" or "preserve" (logos, names, text over photos) before apply.
 apply   repaints only the pixels inside each "replace" box that differ from the surrounding
         background (smooth fill sampled from a band around the box), then sets the translation in
-        the same box, same font, colour and alignment. It may shrink the type to min_scale of the
+        the same box, same font, color and alignment. It may shrink the type to min_scale of the
         original size. If the text still does not fit, the image is written anyway and the block is
         FLAGGED "overflow: needs shorter copy" with an estimated character capacity. Nothing else in
         the image is moved, resized or redrawn. OUT.json records every box, font and flag.
@@ -17,8 +17,8 @@ apply   repaints only the pixels inside each "replace" box that differ from the 
 TRANSLATIONS.json: {"language": "French", "blocks": {"<block id>": "text" | {"text": "...", "short": "...", "highlight": ["49 %"]}}}
 Optional block keys a reviewer may set: "transform": "upper" (source set in capitals), "highlight" (terms drawn in
 "highlight_colour"), "trailing_icon" [x,y,w,h] (an arrow that follows the end of the text), "max_width", "max_lines".
-"shape" [x,y,w,h] is found by detect for a one-line label inside a plain filled shape (a button): a label centred in
-it stays centred in it, keeps its vertical centre when the type shrinks, and may use some of the side padding.
+"shape" [x,y,w,h] is found by detect for a one-line label inside a plain filled shape (a button): a label centered in
+it stays centered in it, keeps its vertical center when the type shrinks, and may use some of the side padding.
 Requires Pillow and numpy. No network, no paid services, no company data in this file.
 """
 import hashlib
@@ -26,6 +26,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -36,15 +37,13 @@ if __name__ == "__main__" and VENV.exists() and Path(sys.prefix).resolve() != VE
 import numpy as np  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 
-VERSION = "1.3"  # 1.1 natural word spaces, 1.2 glyphs measured without compression halos, 1.3 labels centred in buttons
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from job import LABEL  # noqa: E402
+
+VERSION = "1.3"  # written into every box map and report
 FONT_DIRS = ["~/Library/Fonts", "/Library/Fonts", "/System/Library/Fonts", "/System/Library/Fonts/Supplemental"]
 DEFAULT_FONTS = [  # file names looked up in FONT_DIRS; "name#index" picks a face in a .ttc, "name@Style" a variable style
-    "Inter_24pt-Regular.ttf", "Inter_24pt-Medium.ttf", "Inter_24pt-SemiBold.ttf",
-    "DMSans-Regular.ttf", "DMSans-Medium.ttf", "DMSans-SemiBold.ttf",
-    "Montserrat-Regular.ttf", "Montserrat-Medium.ttf", "Montserrat-SemiBold.ttf",
-    "ZalandoSans-Regular.ttf", "ZalandoSans-Medium.ttf", "ZalandoSans_SemiExpanded-Regular.ttf",
-    "ZalandoSans_SemiExpanded-Medium.ttf", "ZalandoSans_Expanded-Regular.ttf", "ZalandoSans_Expanded-Medium.ttf",
-    "SourceSans3-Regular.ttf", "SourceSans3-SemiBold.ttf",
+    # Fonts that ship with macOS. Missing ones are skipped; brand fonts go in config/fonts.txt.
     "Arial.ttf", "Arial Bold.ttf", "HelveticaNeue.ttc#0", "HelveticaNeue.ttc#10",
     "Avenir Next.ttc#7", "Avenir Next.ttc#5", "SFNS.ttf@Regular", "SFNS.ttf@Medium",
     "SFNSMono.ttf@Regular", "SFNSMono.ttf@Medium", "Menlo.ttc#0", "PTMono.ttc#1", "Andale Mono.ttf", "Courier New.ttf",
@@ -370,6 +369,9 @@ def detect(image_path, out_path, fonts=None):
     image_path, out_path = Path(image_path).resolve(), Path(out_path)
     if out_path.exists():
         raise FileExistsError(out_path)
+    if not shutil.which("swift"):
+        raise SystemExit("Image text needs macOS (Apple's text recognition). Text ads work on any computer. "
+                         "On a Mac, swift comes with the Xcode Command Line Tools: xcode-select --install")
     swift = Path(__file__).with_name("ocr_lines.swift")
     result = subprocess.run(["swift", str(swift), str(image_path)], capture_output=True, text=True, check=True)
     ocr = json.loads(result.stdout)
@@ -611,7 +613,7 @@ def apply(image_path, boxes_path, translations_path, out_path):
               "boxes": str(Path(boxes_path).resolve()), "boxes_sha256": sha256(boxes_path),
               "translations": str(Path(translations_path).resolve()), "translations_sha256": sha256(translations_path),
               "output": str(out_path.resolve()), "output_sha256": sha256(out_path), "language": words.get("language"),
-              "label": "AI draft, not yet reviewed by a native speaker", "flagged_blocks": flagged, "blocks": records}
+              "label": LABEL, "flagged_blocks": flagged, "blocks": records}
     out_path.with_suffix(".json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"output": str(out_path), "flagged": flagged,
                       "blocks": {r["id"]: r["status"] for r in records}}, ensure_ascii=False))
@@ -620,10 +622,15 @@ def apply(image_path, boxes_path, translations_path, out_path):
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    if args[:1] == ["detect"] and len(args) in (3, 5):
-        fonts = Path(args[4]).read_text().split("\n") if len(args) == 5 and args[3] == "--fonts" else None
-        detect(args[1], args[2], [f for f in fonts or [] if f.strip()] or None)
-    elif args[:1] == ["apply"] and len(args) == 5:
-        apply(*args[1:])
-    else:
-        raise SystemExit(__doc__)
+    try:
+        if "-h" in args or "--help" in args:
+            print(__doc__)
+        elif args[:1] == ["detect"] and len(args) in (3, 5):
+            fonts = Path(args[4]).read_text().split("\n") if len(args) == 5 and args[3] == "--fonts" else None
+            detect(args[1], args[2], [f for f in fonts or [] if f.strip()] or None)
+        elif args[:1] == ["apply"] and len(args) == 5:
+            apply(*args[1:])
+        else:
+            raise SystemExit(__doc__)
+    except (ValueError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from None

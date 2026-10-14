@@ -278,7 +278,10 @@ def prepare(args):
     example = "--example" in args
     languages = None
     if "--languages" in args:
-        languages = [c.strip() for c in args[args.index("--languages") + 1].split(",") if c.strip()]
+        value = (args[args.index("--languages") + 1:] or [""])[0]
+        languages = [c.strip() for c in value.split(",") if c.strip()] if not value.startswith("-") else []
+        if not languages:
+            raise SystemExit("Add the language codes after --languages, for example --languages fr,es")
     runs = [a for a in args if a.startswith("output") or Path(a).is_dir()]
     if runs:
         run_dir = Path(runs[0]).resolve()
@@ -458,6 +461,9 @@ def words(run_dir, name, code, surface=None):
 
 
 def main(argv):
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return
     if not argv or argv[0] not in ("config", "prepare", "check", "words"):
         raise SystemExit(__doc__)
     if argv[0] == "config":
@@ -492,4 +498,7 @@ def main(argv):
 
 if __name__ == "__main__":
     use_venv()
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except (ValueError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from None

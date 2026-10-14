@@ -12,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 try:
@@ -113,7 +114,7 @@ def check_sentence_lines(font_spec):
 
 
 def check_button(path, font_spec, folder):
-    """The label is re-set centred in its button (the bug was "Réserver" against the button's left edge)."""
+    """The label is re-set centred in its button ("Réserver"), not against the button's left edge."""
     x0, y0, x1, y1 = BUTTON_BOX
     if shutil.which("swift"):
         out = tool.detect(path, folder / "button-detected.json")
@@ -142,7 +143,8 @@ def check_button(path, font_spec, folder):
 @unittest.skipIf(tool is None, "Pillow and numpy are not installed (only needed for image ads)")
 class ResetImageText(unittest.TestCase):
     def test_synthetic_ad(self):
-        main()
+        with mock.patch("sys.stdout"):
+            main()
 
 
 if __name__ == "__main__":

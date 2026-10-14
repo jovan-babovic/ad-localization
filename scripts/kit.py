@@ -17,7 +17,7 @@ import sys
 from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import IMAGE_TYPES, LABEL, VIDEO_TYPES, check, load, now, save, use_venv, words  # noqa: E402
+from job import IMAGE_TYPES, LABEL, ROOT, VIDEO_TYPES, check, load, now, save, use_venv, words  # noqa: E402
 
 FIELD_LABELS = {"primary_text": "Text above the ad", "headline": "Headline", "description": "Description",
                 "cta": "Button", "path": "Display path", "image_text": "Text in the image",
@@ -317,9 +317,11 @@ def build(run_dir):
         if "credits_used" in r:
             credits.append((record.parent.relative_to(run_dir).as_posix(), r.get("step"), r["credits_used"]))
     blind_cost = sum(r.get("cost_usd_estimate") or 0 for r in (load(back_path).get("runs", []) if back_path.exists() else []))
+    brief = Path(data["config"])  # config/, or examples/config/ for the sample
+    brief = brief.relative_to(ROOT) if brief.is_relative_to(ROOT) else brief
     index = [f'<h1>Ad localization review kit</h1>', nav("index.html"),
              f'<p class="lead">Your ads in {escape(", ".join(m["language"] for m in markets))}, drafted by AI from the brief in '
-             f'config/. Every draft sits next to its original with a character check, a blind back-translation (a separate '
+             f'{escape(brief.as_posix())}/. Every draft sits next to its original with a character check, a blind back-translation (a separate '
              f'Claude that never saw the English turns it back into English) and a note on whether the meaning held.</p>',
              '<h2>Markets</h2><div class="scroll"><table class="stack"><tr><th>Market</th><th>Address</th><th>Lines</th><th>Fit as drafted</th>'
              '<th>Need the short version</th><th>Nothing fits yet</th><th>To check</th><th>Media made</th></tr>']
@@ -360,6 +362,12 @@ def build(run_dir):
 
 if __name__ == "__main__":
     use_venv()
-    if len(sys.argv) != 2:
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print(__doc__)
+    elif len(sys.argv) != 2:
         raise SystemExit(__doc__)
-    build(sys.argv[1])
+    else:
+        try:
+            build(sys.argv[1])
+        except (ValueError, FileNotFoundError) as error:
+            raise SystemExit(str(error)) from None

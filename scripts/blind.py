@@ -106,6 +106,9 @@ def run_batch(items, folder, model):
 
 
 def main(argv):
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return
     if not argv or argv[0].startswith("-"):
         raise SystemExit(__doc__)
     run_dir = Path(argv[0]).resolve()
@@ -146,4 +149,7 @@ def main(argv):
 
 if __name__ == "__main__":
     use_venv()
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except (ValueError, RuntimeError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from None

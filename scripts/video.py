@@ -264,7 +264,6 @@ def cmd_dub(run_dir, name, code, music_volume, starts_override):
     folder = Path(run_dir) / "video" / name
     video = source_video(run_dir, name)
     narration, music = folder / code / "narration.wav", folder / "stems" / "instrumental.mp3"
-    narration = narration if narration.exists() else narration.with_suffix(".mp3")  # older runs recorded one take
     for path, how in ((narration, f"voice.py speak {run_dir} --video {name} --language {code}"),
                       (music, f"voice.py stems {run_dir} --video {name}")):
         if not path.exists():
@@ -508,9 +507,9 @@ def cmd_screen(run_dir, name, code):
             else:
                 shown = shown_before or " ".join(english_words[:min(len(runs), len(english_words))])
             shown_before = shown
-            alpha, mask, sxa = m["alpha"], m["mask"], sx
-            if len(runs) == len(shown.split()):
-                fades = [float(np.percentile(alpha[:, a - sxa:b - sxa + 1][mask[:, a - sxa:b - sxa + 1]], 97)) for a, b in runs]
+            alpha, mask = m["alpha"], m["mask"]
+            if len(runs) == len(shown.split()):  # runs are columns inside the search box, like alpha and mask
+                fades = [float(np.percentile(alpha[:, a:b + 1][mask[:, a:b + 1]], 97)) for a, b in runs]
             else:
                 fades = [float(np.percentile(alpha[mask], 97))] * len(shown.split())
             found_on[int(path.stem[1:])] = dict(box=m["box"], read=bool(read), shown=shown, fades=fades)
@@ -564,6 +563,10 @@ def cmd_screen(run_dir, name, code):
         if skipped:
             record["status"] = (f"FLAGGED: English over a busy background in {len(skipped)} frame(s) from "
                                 f"{round(skipped[0] / fps, 2)}s; left in English there")
+        if np.abs(ink - bg_colour).max() < 40:  # the reference frame caught the text mid-fade: the redraw is as faint
+            record["status"] = (f"FLAGGED: low contrast, text {block['colour']} on background {tool.hexcolor(bg_colour)} at the "
+                                f"reference frame ({round(ref_n / fps, 2)}s). Set \"frame\" on this item in media-text.json to a time "
+                                "where the text is fully shown and opaque, then run screen again")
         record.setdefault("status", "replaced in every frame it shows")
     if not edits:
         raise SystemExit("No on-screen text could be replaced; see the flags above. The dubbed video is unchanged.")
@@ -593,6 +596,7 @@ def cmd_screen(run_dir, name, code):
         encoder.stdin.write(Image.open(edits[n]).convert("RGB").tobytes() if n in edits else frame)
         n += 1
     encoder.stdin.close()
+    decoder.stdout.close()
     if decoder.wait() or encoder.wait():
         raise SystemExit("ffmpeg failed while writing the video with the new on-screen text.")
     record = dict(label=LABEL, made_at=now(), output=f"{code}/localized.mp4", base=base.name, frames_written=n, items=records,
@@ -644,6 +648,9 @@ def cmd_prepare(run_dir, video, every):
 
 
 def main(argv):
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return
     if not argv or argv[0] not in ("prepare", "dub", "screen") or len(argv) < 3:
         raise SystemExit(__doc__)
     tools()
@@ -663,4 +670,7 @@ def main(argv):
 
 if __name__ == "__main__":
     use_venv()
-    main(sys.argv[1:])
+    try:
+        main(sys.argv[1:])
+    except (ValueError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from None

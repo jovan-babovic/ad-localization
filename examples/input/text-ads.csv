@@ -1,16 +1,41 @@
 ad,platform,field,text
-field-mode-search,google,headline,Field Mode by PropFusion
-field-mode-search,google,headline,Reserve Study Inspection App
-field-mode-search,google,headline,Built for Reserve Specialists
-field-mode-search,google,headline,"Capture On Site, Skip Cleanup"
-field-mode-search,google,headline,Photos Linked to Components
-field-mode-search,google,headline,No More Mystery Photos
-field-mode-search,google,headline,Geotagged Photos and Notes
-field-mode-search,google,headline,Book a Field Mode Demo
-field-mode-search,google,description,Every photo and note connects to the right component the moment you capture it.
-field-mode-search,google,description,"Back at the desk, your site data is already organized and ready for your report."
-field-mode-search,google,description,"Built for reserve study fieldwork. Type, say or sketch each note while you're on site."
-field-mode-square,meta,primary_text,"Photos in one place, notes in another? Field Mode keeps both with the component you're inspecting."
-field-mode-square,meta,headline,No more mystery photos
-field-mode-square,meta,description,"Type, say or sketch each note"
-field-mode-square,meta,cta,Book now
+g1-search-app,google,headline,Field Mode by PropFusion
+g1-search-app,google,headline,Reserve Study Inspection App
+g1-search-app,google,headline,Built for Reserve Specialists
+g1-search-app,google,headline,"Capture On Site, Skip Cleanup"
+g1-search-app,google,headline,Photos Linked to Components
+g1-search-app,google,headline,No More Mystery Photos
+g1-search-app,google,headline,Geotagged Photos and Notes
+g1-search-app,google,headline,Book a Field Mode Demo
+g1-search-app,google,description,Every photo and note connects to the right component the moment you capture it.
+g1-search-app,google,description,"Back at the desk, your site data is already organized and ready for your report."
+g1-search-app,google,description,"Built for reserve study fieldwork. Type, say or sketch each note while you're on site."
+g1-search-app,google,path,field-mode
+g1-search-app,google,path,demo
+g2-search-desk,google,headline,PropFusion Field Mode
+g2-search-desk,google,headline,Fieldwork Without the Cleanup
+g2-search-desk,google,headline,No Double-Entry After Visits
+g2-search-desk,google,headline,"Voice Notes, Transcribed by AI"
+g2-search-desk,google,headline,Sketch Right on the Photo
+g2-search-desk,google,headline,Notes Land in the Study
+g2-search-desk,google,headline,"Type, Say or Sketch Each Note"
+g2-search-desk,google,headline,See Field Mode in a Demo
+g2-search-desk,google,description,Stop sorting site photos for hours. Field Mode files each one under the right component.
+g2-search-desk,google,description,Record a voice note on site. Field Mode transcribes it with AI and keeps the audio too.
+g2-search-desk,google,description,Capture on site and it lands in the study. Book a demo at propfusion.com/demo.
+g2-search-desk,google,path,field-mode
+g2-search-desk,google,path,demo
+m1-meta-video,meta,headline,Skip the photo cleanup
+m1-meta-video,meta,description,For reserve study pros
+m1-meta-video,meta,primary_text,Fieldwork shouldn't end in hours of photo sorting. Field Mode links each photo and note to its component on site.
+m1-meta-video,meta,cta,Learn more
+m2-meta-image,meta,headline,No more mystery photos
+m2-meta-image,meta,description,"Type, say or sketch each note"
+m2-meta-image,meta,primary_text,"Photos in one place, notes in another? Field Mode keeps both with the component you're inspecting."
+m2-meta-image,meta,cta,Book now
+l1-linkedin-video,linkedin,headline,"Field Mode by PropFusion, the inspection app for reserve studies"
+l1-linkedin-video,linkedin,primary_text,Reserve study fieldwork has always created more work back at the desk. Field Mode links every photo and note to the right component on site.
+l1-linkedin-video,linkedin,cta,Request demo
+l2-linkedin-image,linkedin,headline,Capture on site. It lands in the study. No double-entry.
+l2-linkedin-image,linkedin,primary_text,Field Mode ties each site photo to its component and maps where you took it. You won't have to guess which roof section it shows.
+l2-linkedin-image,linkedin,cta,Learn more

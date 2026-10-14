@@ -25,7 +25,6 @@
   "platforms": {
     "google": {
       "name": "Google Ads (responsive search ads)",
-      "wide_characters_count_double": true,
       "fields": {
         "headline": {"max": 30, "sources": ["google_rsa"]},
         "description": {"max": 90, "sources": ["google_rsa"]},

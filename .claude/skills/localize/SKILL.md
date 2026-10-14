@@ -30,37 +30,39 @@ Read the company files now: `config/company.md`, `config/markets.json`, `config/
 
 ## 2. Read the text inside images and videos (skip if there are none)
 
-**Images** (needs a Mac, plus Pillow and numpy). For each image NAME.png in the input folder:
+**Images** (needs a Mac, plus Pillow and NumPy). For each image NAME.png in the input folder:
 
 1. `python3 scripts/reset_image_text.py detect INPUT/NAME.png RUN/images/NAME.boxes.json`
    (INPUT is `input`, or `examples/input` for the sample. If `config/fonts.txt` exists, add `--fonts config/fonts.txt`
-   at the end.) It finds each block of text and measures its box, colour, font and size.
+   at the end.) It finds each block of text and measures its box, color, font and size.
 2. Look at the image and at `RUN/images/NAME.boxes.json`. Every block starts as `"action": "review"`. Set ad copy to
    `"replace"`. Set `"preserve"` for logos, names under "Never translate" when the block holds nothing else,
    product screenshots, and any text sitting on a photo. Fix OCR misreads in `source_text`. If a block is set in
    capitals, add `"transform": "upper"`. If `company.md` says which font each kind of text uses, check each
    block's `font` against it and change it to that font's file when the match picked another. A label in a button
-   has a `shape` and `"align": "center"`: it stays centred in the button.
+   has a `shape` and `"align": "center"`: it stays centered in the button.
 3. For each `replace` block add an item to `RUN/media-text.json`, with the block id:
 
 ```json
 {"items": [
-  {"id": "NAME.b2", "file": "NAME.png", "surface": "image", "text": "Stop sorting site photos at your desk.", "block": "b2"}
+  {"id": "NAME.b3", "file": "NAME.png", "surface": "image", "text": "Stop sorting site photos at your desk.", "block": "b3"}
 ]}
 ```
 
 **Videos.** For each video run `python3 scripts/video.py prepare RUN input/NAME.mp4` (for the sample:
 `examples/input/NAME.mp4`). It saves the audio, a frame every 2 seconds in `RUN/video/NAME/frames/` and the
-transcript if `NAME.transcript.txt` sits next to the video.
+transcript if `NAME.transcript.txt` sits next to the video. If the frames show English text on screen, run the
+same command again with `--every 0.5` before you pick the times below.
 - No transcript? Ask the person: add `NAME.transcript.txt` themselves (free), or pay for transcription. For the
   paid route run `python3 scripts/voice.py transcribe RUN --video NAME`, show the estimate, and only after a yes
   run it again with `--confirm`.
 - Add the voice-over as one item: `{"id": "NAME.script", "file": "NAME.mp4", "surface": "spoken", "text": "<transcript>"}`.
 - Look at the frames. For English text on screen, add one item each with when it shows and where:
-  `{"id": "NAME.s1", "file": "NAME.mp4", "surface": "screen", "text": "Introducing Field Mode", "start": 8.0, "end": 12.0, "box": [x, y, w, h], "frame": 10.0}`.
+  `{"id": "NAME.s1", "file": "NAME.mp4", "surface": "screen", "text": "Introducing Field Mode", "start": 9.5, "end": 12.2, "box": [246, 332, 756, 78], "frame": 11.0}`.
   `text` is the whole line once it is complete. `start` is the last frame before the text appears and `end` the
   first frame after it is gone, so the window covers its zoom, typing and fade; `frame` is a time where the whole
-  line sits still; `box` is where it sits then, in the video's pixels. Add `"align": "center"` for centred titles.
+  line is fully typed in and fully opaque, not fading; `box` is where it sits then, in the video's pixels. Add
+  `"align": "center"` for centered titles.
   Only one-line text on a plain background can be redrawn; leave product screens, logos, text over footage and
   lines made only of names under "Never translate" in English.
 
@@ -100,7 +102,7 @@ python3 scripts/reset_image_text.py apply INPUT/NAME.png RUN/images/NAME.boxes.j
 
 The first command writes the checked translation for each block (and the short version as a fallback); it
 refuses while the drafts have check errors. The tool erases the English and sets the translation in the same box,
-same font, colour and alignment, shrinking the type to 85% at most. Text that still doesn't fit is **flagged, not
+same font, color and alignment, shrinking the type to 85% at most. Text that still doesn't fit is **flagged, not
 squashed**: tell the person which line, and offer a shorter wording (new short version, then check, blind and
 meaning again, then `words` and `apply` again; earlier images move to `RUN/images/old/`). Look at every output
 image yourself before moving on.

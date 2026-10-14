@@ -1,7 +1,8 @@
 # PropFusion (example company)
 
 Sample setup for `/localize example`. `/setup` writes your own version of this file to `config/company.md`.
-The example ads are demo ads made for this repo, not live campaigns.
+The example ads are demo ads for PropFusion's Field Mode, not live campaigns. See `examples/README.md` for how you
+may use them.
 
 ## Company and site
 - Company: PropFusion. Website: https://www.propfusion.com

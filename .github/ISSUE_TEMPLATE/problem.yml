@@ -1,0 +1,32 @@
+name: Something broke or was confusing
+description: A step failed, a check looked wrong, or the README lost you.
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you typed, what you expected and what you got. Paste the message Claude or the script showed.
+    validations:
+      required: true
+  - type: dropdown
+    id: step
+    attributes:
+      label: Which step
+      options:
+        - /setup
+        - Text ads
+        - Image ads
+        - Video ads (voice or music)
+        - Video ads (text on screen)
+        - The review kit
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Your computer
+      description: For example "macOS 26, Python 3.9, Claude Code 2.1". Run `python3 --version` and `claude --version`.
+  - type: markdown
+    attributes:
+      value: Please don't paste API keys, ad account details or ads you can't share publicly.

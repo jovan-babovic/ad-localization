@@ -78,7 +78,7 @@ did not check. A script that exits cleanly is not an approval.
 ## Where things are
 
 - `scripts/job.py` config, prepare and check. `scripts/blind.py` blind back-translation. `scripts/kit.py` the
-  review kit. `scripts/voice.py` ElevenLabs. `scripts/video.py` ffmpeg. `scripts/reset_image_text.py` image text.
+  review kit. `scripts/voice.py` ElevenLabs. `scripts/video.py` FFmpeg. `scripts/reset_image_text.py` image text.
 - `scripts/limits.json` platform character limits with their official sources and the date they were checked.
 - Each run lives in `output/<date-time>/`; the kit is `output/<run>/kit/index.html`.
 - `config/fonts.txt` (optional): paths of brand fonts installed on this computer, for the image tool. Never copy

@@ -83,7 +83,7 @@ class Client:
 
 
 def spending_gate(account, estimate):
-    """The safeguards kept from the original job. Unknown values stop the job too."""
+    """Safeguards checked before every paid call. Unknown values stop the job too."""
     if account.get("status") != "active":
         raise ValueError(f"The ElevenLabs plan is not active (status: {account.get('status')}). A paid plan is needed "
                          "for commercial use: https://elevenlabs.io/pricing")
@@ -293,7 +293,7 @@ def cmd_speak(client, run_dir, name, code, args, confirm):
     # One request per sentence, so every sentence starts and ends in its own silence and the dub never has to cut a
     # take mid-word. Request stitching keeps the voice consistent from sentence to sentence: previous_request_ids
     # (up to 3, from each response's request-id header) and next_text, per
-    # https://elevenlabs.io/docs/developers/guides/cookbooks/text-to-speech/request-stitching. The with-timestamps
+    # https://elevenlabs.io/docs/eleven-api/guides/how-to/text-to-speech/request-stitching. The with-timestamps
     # route also returns when each character is spoken, for placing each sentence where the English one starts.
     parts = [p for p in re.split(r"(?<=[.!?…])\s+", text) if p]
     clips_dir = folder / "sentences"
@@ -344,6 +344,9 @@ def cmd_speak(client, run_dir, name, code, args, confirm):
 
 
 def main(argv):
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return
     if not argv or argv[0] not in ("account", "voices", "transcribe", "stems", "speak"):
         raise SystemExit(__doc__)
     client = Client(api_key())
@@ -365,7 +368,7 @@ def main(argv):
                 if "--language" not in argv:
                     raise SystemExit("Add --language CODE (for example --language fr).")
                 cmd_speak(client, run_dir, name, argv[argv.index("--language") + 1], argv, confirm)
-    except ValueError as error:
+    except (ValueError, FileNotFoundError) as error:
         raise SystemExit(str(error)) from None
 
 

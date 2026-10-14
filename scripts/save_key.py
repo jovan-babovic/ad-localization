@@ -53,6 +53,9 @@ def describe_plan(key):
 
 
 if __name__ == "__main__":
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
     if not sys.stdin.isatty():
         sys.exit("Run this in your own terminal so the key stays hidden (not through Claude).")
     try:
