@@ -6,6 +6,7 @@
       "Bash(python3 scripts/kit.py *)",
       "Bash(python3 scripts/video.py *)",
       "Bash(python3 scripts/reset_image_text.py *)",
+      "Bash(python3 scripts/phone_check.py *)",
       "Bash(python3 scripts/voice.py account)",
       "Bash(python3 scripts/voice.py voices *)",
       "Bash(python3 -m unittest *)",

@@ -165,6 +165,10 @@ def finish(client, folder, record, before, headers=None):
 
 def video_folder(run_dir, name):
     folder = Path(run_dir) / "video" / name
+    prepared = load(folder / "video.json") if (folder / "video.json").exists() else {}
+    if prepared.get("voice") == "none":  # music only, or no sound at all: nothing to pay for
+        raise SystemExit(f"{name} has no voice-over (marked music only), so there is nothing to transcribe, separate or "
+                         "dub. Only its text on screen changes: python3 scripts/video.py screen.")
     if not (folder / "audio.mp3").exists():
         raise SystemExit(f"{folder}/audio.mp3 not found. Run first: python3 scripts/video.py prepare {run_dir} input/<video file>")
     return folder

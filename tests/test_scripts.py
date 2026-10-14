@@ -297,6 +297,28 @@ class Kit(unittest.TestCase):
             self.assertIn(job.LABEL, (self.run / "kit" / name).read_text(encoding="utf-8"))
         self.assertIn(job.LABEL, (self.run / "kit/fr.csv").read_text(encoding="utf-8-sig"))
 
+    def test_every_page_is_a_refrain_page_with_the_draft_label(self):
+        self.build()
+        pages = list((self.run / "kit").glob("*.html"))
+        self.assertGreaterEqual(len(pages), 2)
+        for page in pages:
+            html = page.read_text(encoding="utf-8")
+            for must in ("linkedin.com/in/jovanbabovic", "refrain.team", "utm_source=kit", job.LABEL,
+                         "Nothing here has been uploaded", '"Crimson Pro"', '"Geist"', 'aria-label="Refrain"'):
+                self.assertIn(must, html, f"{page.name} lacks {must}")
+
+    def test_a_rejected_render_never_shows_as_a_draft(self):
+        folder = self.run / "video" / "clip" / "fr"
+        folder.mkdir(parents=True)
+        (folder / "localized.mp4").write_bytes(b"not really a video")
+        with mock.patch("sys.stdout"):
+            video.cmd_reject(self.run, "clip", "fr", "the title is half replaced in the fade")
+        self.assertFalse((folder / "localized.mp4").exists())
+        self.assertEqual(len(list((folder / "old").glob("*-localized.mp4"))), 1)
+        self.assertIn("half replaced", job.load(folder / "rejected.json")["reason"])
+        with self.assertRaises(SystemExit):
+            video.cmd_reject(self.run, "clip", "fr", "again")  # nothing left to reject
+
     def test_old_back_translation_cannot_vouch_for_new_wording(self):
         draft_all(self.run, lambda l: "Essayez donc Acme Pro")
         with self.assertRaises(SystemExit) as stop:

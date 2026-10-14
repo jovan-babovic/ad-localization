@@ -13,11 +13,12 @@ from html.parser import HTMLParser
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import IMAGE_TYPES, LABEL, ROOT, VIDEO_TYPES, check, load, now, save, use_venv, words  # noqa: E402
+from job import LABEL, ROOT, check, load, now, save, use_venv, words  # noqa: E402
 
 FIELD_LABELS = {"primary_text": "Text above the ad", "headline": "Headline", "description": "Description",
                 "cta": "Button", "path": "Display path", "image_text": "Text in the image",
@@ -28,38 +29,66 @@ RESULT_TEXT = {"fits": ("ok", "Fits"), "over_recommended": ("warn", "Longer than
                "over_max": ("bad", "Over the platform limit"), "within_estimate": ("ok", "Within timing estimate"),
                "over_budget": ("warn", "Probably too long for its box"),
                "over_estimate": ("warn", "Long for the video"), "no_limit": ("plain", "No character limit")}
+REFRAIN = "https://refrain.team/?utm_source=kit&utm_medium=html&utm_campaign=ad-localization&utm_content="
+LINKEDIN = "https://www.linkedin.com/in/jovanbabovic/"
+REPO = "https://github.com/jovan-babovic/ad-localization"
+LOGO = (Path(__file__).with_name("refrain-logo.svg")).read_text(encoding="utf-8").strip()
+FONTS = ("https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400..600&family=Geist:wght@400..600"
+         "&family=Geist+Mono:wght@400..500&display=swap")
+# Refrain's house style (Crimson Pro headlines, Geist text, cream cards, one orange accent), copied here so the kit
+# needs nothing outside this folder. Opened offline, the pages fall back to the system fonts.
 CSS = """
-:root{--bg:#fbf8f3;--card:#fff;--ink:#161618;--muted:#5f5d58;--line:#e8e1d6;--accent:#f25533;--ok:#1d7a46;--okbg:#e5f4ea;
---warn:#8a5a00;--warnbg:#fdf1d8;--bad:#b42318;--badbg:#fde8e6;--plainbg:#f1ede6}
+:root{--font-serif:"Crimson Pro",Georgia,serif;--font-sans:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+--font-mono:"Geist Mono",ui-monospace,Menlo,monospace;--ink:#161618;--text-2:rgba(22,22,24,.84);--text-3:rgba(22,22,24,.66);
+--text-4:rgba(22,22,24,.56);--paper:#fff;--cream:#f8f5f0;--sand:#f1ebe2;--tan:#e7dccd;--line:rgba(22,22,24,.08);
+--line-strong:rgba(22,22,24,.16);--accent:#f25533;--accent-ink:#c63d1f;--night:#191a2c;--on-night:#f7f7f8;
+--green-ink:#16693a;--green-tint:#dcf3e4;--amber-ink:#7a5b00;--amber-tint:#fdf1cf;--red-ink:#a8201a;--red-tint:#fde4e2;
+--r-sm:8px;--r-md:12px;--r-pill:9999px}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow-x:hidden}
-.banner{position:sticky;top:0;z-index:10;background:var(--ink);color:#fff;text-align:center;padding:10px 16px;font-size:14px;font-weight:600;border-bottom:3px solid var(--accent)}
-main{max-width:1040px;margin:0 auto;padding:24px 16px 64px}
-h1{font-size:30px;line-height:1.2;margin:8px 0 8px}h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
-h3{font-size:17px;margin:28px 0 10px}p{margin:8px 0}a{color:#b8361c}
-.lead{color:var(--muted);max-width:720px}
-nav.kit{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px}nav.kit a{padding:6px 14px;border:1px solid var(--line);border-radius:999px;background:var(--card);text-decoration:none;color:var(--ink);font-size:14px}
-nav.kit a.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 var(--font-sans);-webkit-font-smoothing:antialiased;overflow-wrap:anywhere}
+.banner{position:sticky;top:0;z-index:10;background:var(--night);color:var(--on-night);text-align:center;padding:10px 16px;
+font-size:14px;font-weight:500;border-bottom:3px solid var(--accent)}
+main{max-width:1040px;margin:0 auto;padding:32px 16px 0}
+h1{font:400 48px/52px var(--font-serif);letter-spacing:-.015em;margin:8px 0 12px}
+h2{font:500 32px/38px var(--font-serif);letter-spacing:-.005em;margin:56px 0 16px}
+h3{font:600 18px/25px var(--font-sans);letter-spacing:-.01em;margin:32px 0 8px}
+p{margin:8px 0}a{color:var(--accent-ink)}
+.lead{color:var(--text-3);font-size:18px;line-height:26px;max-width:720px}
+.credit{font-size:14px;color:var(--text-4);margin:0 0 20px}
+nav.kit{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px}
+nav.kit a{padding:6px 14px;border-radius:var(--r-pill);background:var(--cream);text-decoration:none;color:var(--ink);font-size:14px;font-weight:500}
+nav.kit a.on{background:var(--paper);box-shadow:inset 0 0 0 1px var(--line-strong)}
 .grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
-.card h4{margin:0 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600}
-.text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:17px;margin:4px 0 8px}
-.meta{font-size:13px;color:var(--muted)}
-.pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;margin:2px 4px 2px 0;background:var(--plainbg)}
-.pill.ok{background:var(--okbg);color:var(--ok)}.pill.warn{background:var(--warnbg);color:var(--warn)}.pill.bad{background:var(--badbg);color:var(--bad)}
-.check{margin-top:10px;padding:10px 12px;background:var(--bg);border-radius:8px;font-size:14px}
-.check b{font-weight:600}.notes{margin:8px 0 0;padding-left:18px;font-size:14px}.notes li{margin:3px 0}
-.field{margin:18px 0 26px}.field>.label{font-weight:600;margin-bottom:8px}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:15px}
-th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}th{font-size:13px;color:var(--muted);font-weight:600}
-.scroll{overflow-x:auto}
-img,video{display:block;max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
-.empty{min-height:120px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);background:var(--plainbg);border-radius:8px;padding:16px;font-size:14px}
-footer{margin-top:48px;font-size:13px;color:var(--muted)}
-@media(max-width:700px){.grid{grid-template-columns:1fr}.grid .first{order:-1}h1{font-size:25px}.text{font-size:16px}
-table.stack,table.stack tbody,table.stack tr,table.stack td{display:block;width:100%}table.stack tr:first-child{display:none}
-table.stack tr{border-bottom:1px solid var(--line);padding:8px 0}table.stack td{border:0;padding:4px 12px;display:flex;justify-content:space-between;gap:12px}
-table.stack td::before{content:attr(data-label);color:var(--muted);font-size:13px}}
+.card{background:var(--cream);border-radius:var(--r-sm);padding:20px;min-width:0}
+.card h4{margin:0 0 6px;font-size:14px;font-weight:500;color:var(--text-4)}
+.text{white-space:pre-wrap;font-size:17px;line-height:1.5;margin:4px 0 8px}
+.meta{font-size:14px;color:var(--text-4)}
+.pill{display:inline-block;font-size:12px;line-height:16px;font-weight:500;padding:3px 10px;border-radius:var(--r-pill);margin:2px 4px 2px 0;background:var(--sand)}
+.pill.ok{background:var(--green-tint);color:var(--green-ink)}.pill.warn{background:var(--amber-tint);color:var(--amber-ink)}
+.pill.bad{background:var(--red-tint);color:var(--red-ink)}
+.check{margin-top:12px;padding:12px 14px;background:var(--paper);border:1px solid var(--line);border-radius:var(--r-sm);font-size:14px;color:var(--text-2)}
+.check b{font-weight:600;color:var(--ink)}.notes{margin:8px 0 0;padding-left:20px;font-size:14px;color:var(--text-2)}.notes li{margin:3px 0}
+.field{margin:20px 0 28px}.field>.label{font-weight:500;margin-bottom:8px}
+.ad-head{margin-top:56px;padding-top:24px;border-top:1px solid var(--line)}.ad-head h2{margin-top:0}
+table{width:100%;border-collapse:collapse;font-size:14px;line-height:20px}
+.table{border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:13px;font-weight:500;color:var(--text-4);background:var(--cream)}tr:last-child td{border-bottom:0}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+img,video{display:block;max-width:100%;height:auto;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--paper)}
+.empty{min-height:120px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--text-4);
+background:var(--sand);border-radius:var(--r-sm);padding:16px;font-size:14px}
+ol,ul{padding-left:22px}li{margin:4px 0}
+footer{margin-top:72px;padding:32px 0 48px;border-top:1px solid var(--line);font-size:14px;color:var(--text-4);display:flex;
+flex-wrap:wrap;gap:16px 32px;align-items:flex-start;justify-content:space-between}
+footer .who b{display:block;color:var(--ink);font-weight:500}footer .logo{display:inline-block;width:96px;flex:none}
+footer .logo svg{display:block;width:100%;height:auto}footer .fine{flex-basis:100%;margin:0}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.grid .first{order:-1}
+table.stack,table.stack tbody,table.stack tr,table.stack td{display:block}table.stack tr:first-child{display:none}
+table.stack tr{border-bottom:1px solid var(--line);padding:6px 0}table.stack tr:last-child{border-bottom:0}
+table.stack td{border:0;padding:4px 12px;display:flex;justify-content:space-between;gap:12px;text-align:right}
+table.stack td::before{content:attr(data-label);color:var(--text-4);text-align:left}}
+@media(max-width:640px){h1{font-size:36px;line-height:40px}h2{font-size:26px;line-height:32px}.lead{font-size:17px;line-height:24px}}
 """
 
 
@@ -87,11 +116,17 @@ def verify_links(kit):
 
 
 def page(title, body):
+    """Every page the kit writes: the AI-draft banner on top, the credit and the plain facts in the footer. Any
+    other page added to the kit must be made with this function."""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,'
-            f'initial-scale=1"><title>{escape(title)}</title><style>{CSS}</style></head><body>'
-            f'<div class="banner">{LABEL}</div><main>{body}<footer>Made with the ad-localization job '
-            f'(github.com/jovan-babovic/ad-localization). {LABEL}. Nothing here has been uploaded to an ad account.'
-            f'</footer></main></body></html>')
+            f'initial-scale=1"><title>{escape(title)}</title><link rel="preconnect" href="https://fonts.googleapis.com">'
+            f'<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="{FONTS}">'
+            f'<style>{CSS}</style></head><body><div class="banner">{LABEL}</div><main>{body}<footer>'
+            f'<div class="who"><b>Built by <a href="{LINKEDIN}">Jovan Babovic</a> at <a href="{REFRAIN}footer">Refrain</a></b>'
+            f'We build AI systems for B2B marketing teams</div>'
+            f'<a class="logo" href="{REFRAIN}footer" aria-label="Refrain">{LOGO}</a>'
+            f'<p class="fine">{LABEL}. Nothing here has been uploaded to an ad account. Made with the free '
+            f'<a href="{REPO}">ad-localization</a> project.</p></footer></main></body></html>')
 
 
 def count_text(variant, limit):
@@ -151,6 +186,17 @@ def image_note(run_dir, stem, code):
     if used_short:
         parts.append('<p class="meta">Short version used for: ' + escape(", ".join(f'"{b["translation"]}"' for b in used_short)) + "</p>")
     return "".join(parts)
+
+
+def made_still(video, frames, out):
+    """A still from the made video at the moment the original's poster shows, so the draft never opens on English.
+    None when ffmpeg is missing or the frame cannot be read."""
+    if not shutil.which("ffmpeg"):
+        return None
+    at = float(Path(frames[min(1, len(frames) - 1)]).stem[1:]) if frames else 0.0
+    done = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", str(at), "-i", str(video), "-frames:v", "1",
+                           "-vf", "scale='min(1280,iw)':-2", "-q:v", "3", str(out)], capture_output=True)
+    return out if done.returncode == 0 and out.exists() else None
 
 
 def build(run_dir):
@@ -247,9 +293,11 @@ def build(run_dir):
         counts = dict(lines=0, fits=0, short=0, none=0, check=0)
         csv_rows = []
         for (ad, file), fields in groups.items():
-            body.append(f'<h2>{escape(ad)}</h2><p class="meta">From {escape(file)}</p>')
+            source = next((f["source"] for f in fields if f.get("source")), None)
+            body.append(f'<div class="ad-head"><h2>{escape(ad)}</h2><p class="meta">From {escape(file)}'
+                        + (f' · <a href="{escape(source)}">the ad</a>' if source else "") + "</p></div>")
             stem, suffix = Path(file).stem, Path(file).suffix.lower()
-            if suffix in IMAGE_TYPES:
+            if file in data["media"]["images"]:
                 made = run_dir / "images" / f"{stem}.{code}.png"
                 note = image_note(run_dir, stem, code) if made.exists() else ""
                 right = (f'<img src="{asset(made, f"{stem}.{code}.png")}" alt="{escape(market["language"])} draft of {escape(ad)}">{note}'
@@ -257,7 +305,7 @@ def build(run_dir):
                 body.append(f'<div class="grid"><div class="card"><h4>Original</h4><img src="{originals[file]}" alt="Original {escape(ad)}">'
                             f'</div><div class="card"><h4>{escape(code)} draft</h4>{right}</div></div>')
                 media_rows.setdefault(code, []).append((file, "image", made.exists()))
-            elif suffix in VIDEO_TYPES:
+            elif file in data["media"]["videos"]:
                 folder = run_dir / "video" / stem / code
                 prepared = load(run_dir / "video" / stem / "video.json") if (run_dir / "video" / stem / "video.json").exists() else {}
                 frames = prepared.get("frames") or []
@@ -266,13 +314,29 @@ def build(run_dir):
                 dub = load(folder / "dub.json") if (folder / "dub.json").exists() else {}
                 speed = dub.get("faster_percent", 0)
                 made = next((folder / n for n in ("localized.mp4", "dubbed.mp4") if (folder / n).exists()), None)
-                voice_line = (f'Voice: {escape((dub.get("voice") or {}).get("name", "stock voice"))} (ElevenLabs stock voice, '
-                              f'no cloning) · {f"speech {speed}% faster to fit" if speed else "no speed-up needed"} · picture '
-                              f'unchanged: {"yes" if dub.get("picture_unchanged") else "check"}' if dub else
-                              "Voice: the original English voice. This video was not dubbed in this run.")
-                right = (f'<video controls preload="metadata"{poster} src="{asset(made, f"{stem}.{code}.mp4")}"></video>'
-                         f'<p class="meta">{voice_line}</p>'
-                         if made else '<div class="empty">The video is not made yet. The translated script is below.</div>')
+                rejected = load(folder / "rejected.json") if (folder / "rejected.json").exists() else None
+                if dub:
+                    voice_line = (f'Voice: {escape((dub.get("voice") or {}).get("name", "stock voice"))} (ElevenLabs stock voice, '
+                                  f'no cloning) · {f"speech {speed}% faster to fit" if speed else "no speed-up needed"} · picture '
+                                  f'unchanged: {"yes" if dub.get("picture_unchanged") else "check"}')
+                elif prepared.get("voice") == "none" or prepared.get("has_audio") is False:
+                    voice_line = "Voice: none (music only)" if prepared.get("has_audio") else "Voice: none (no sound)"
+                else:
+                    voice_line = "Voice: the original English voice. This video was not dubbed in this run."
+                if rejected:
+                    right = (f'<div class="empty">This render was rejected after review and is not a draft: '
+                             f'{escape(rejected.get("reason", ""))}. The translated text is below.</div>')
+                    made = None
+                else:
+                    still = made_still(made, frames, kit / "assets" / f"{stem}.{code}-poster.jpg") if made else None
+                    if still:
+                        assets[f"assets/{still.name}"] = hashlib.sha256(still.read_bytes()).hexdigest()
+                    draft_poster = f' poster="assets/{still.name}"' if still else ""  # never the English frame
+                    right = (f'<video controls preload="metadata"{draft_poster} src="{asset(made, f"{stem}.{code}.mp4")}"></video>'
+                             f'<p class="meta">{voice_line}</p>'
+                             if made else '<div class="empty">The video is not made yet. The translated text is below.</div>')
+                if made and prepared.get("note"):
+                    right += f'<p class="meta">{escape(prepared["note"])}</p>' 
                 if made and made.name == "localized.mp4" and (folder / "screen.json").exists():
                     screen = load(folder / "screen.json")
                     right += ('<p class="meta">Text on screen:</p><ul class="notes">' + "".join(
@@ -281,8 +345,10 @@ def build(run_dir):
                 if made and (folder / "script.txt").exists():
                     right += f'<p class="meta">Recorded script ({escape(dub.get("script_variant") or "full")} version):</p>' \
                              f'<p class="text">{escape((folder / "script.txt").read_text(encoding="utf-8").strip())}</p>'
-                body.append(f'<div class="grid"><div class="card"><h4>Original</h4><video controls preload="metadata"{poster} '
-                            f'src="{originals[file]}"></video></div><div class="card"><h4>{escape(code)} draft</h4>{right}</div></div>')
+                shown = (f'<img src="{originals[file]}" alt="Original {escape(ad)} (animated GIF)">' if suffix == ".gif" else
+                         f'<video controls preload="metadata"{poster} src="{originals[file]}"></video>')
+                body.append(f'<div class="grid"><div class="card"><h4>Original</h4>{shown}</div>'
+                            f'<div class="card"><h4>{escape(code)} draft</h4>{right}</div></div>')
                 media_rows.setdefault(code, []).append((file, "video", bool(made)))
             for field in fields:
                 body.append(field_block(field, code))
@@ -321,11 +387,13 @@ def build(run_dir):
     blind_cost = sum(r.get("cost_usd_estimate") or 0 for r in (load(back_path).get("runs", []) if back_path.exists() else []))
     brief = Path(data["config"])  # config/, or examples/config/ for the sample
     brief = brief.relative_to(ROOT) if brief.is_relative_to(ROOT) else brief
-    index = [f'<h1>Ad localization review kit</h1>', nav("index.html"),
+    index = [f'<h1>Ad localization review kit</h1>',
+             f'<p class="credit">Built by <a href="{LINKEDIN}">Jovan Babovic</a> at <a href="{REFRAIN}top">Refrain</a></p>',
+             nav("index.html"),
              f'<p class="lead">Your ads in {escape(", ".join(m["language"] for m in markets))}, drafted by AI from the brief in '
              f'{escape(brief.as_posix())}/. Every draft sits next to its original with a character check, a blind back-translation (a separate '
              f'Claude that never saw the English turns it back into English) and a note on whether the meaning held.</p>',
-             '<h2>Markets</h2><div class="scroll"><table class="stack"><tr><th>Market</th><th>Address</th><th>Lines</th><th>Fit as drafted</th>'
+             '<h2>Markets</h2><div class="table"><table class="stack"><tr><th>Market</th><th>Address</th><th>Lines</th><th>Fit as drafted</th>'
              '<th>Need the short version</th><th>Nothing fits yet</th><th>To check</th><th>Media made</th></tr>']
     for m in markets:
         c, made = summary[m["code"]], media_rows.get(m["code"], [])
@@ -333,7 +401,8 @@ def build(run_dir):
                  ("Address", escape(m["address"])), ("Lines", c["lines"]), ("Fit as drafted", c["fits"]),
                  ("Need the short version", c["short"]), ("Nothing fits yet", c["none"]), ("To check", c["check"]),
                  ("Media made", f'{sum(x[2] for x in made)} of {len(made)}')]
-        index.append("<tr>" + "".join(f'<td data-label="{label}">{value}</td>' for label, value in cells) + "</tr>")
+        index.append("<tr>" + "".join(f'<td data-label="{label}"{"" if label in ("Market", "Address") else " class=n"}>{value}</td>'
+                                      for label, value in cells) + "</tr>")
     index.append("</table></div>")
     index += ['<h2>How to use this kit</h2><ol><li>Open each language page and read the drafts. Start with anything marked '
               '"over the platform limit" or "meaning changed".</li><li>Have someone who speaks the language read it before it runs. '

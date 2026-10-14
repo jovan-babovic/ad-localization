@@ -1,8 +1,11 @@
 """Video steps with ffmpeg. No paid calls here (the paid ones are in voice.py).
 
-  python3 scripts/video.py prepare output/RUN input/VIDEO.mp4 [--every 2]
-      Saves the audio, a frame every 2 seconds (for reading on-screen text) and the English transcript
-      if input/VIDEO.transcript.txt exists.
+  python3 scripts/video.py prepare output/RUN input/VIDEO.mp4 [--every 2] [--music-only]
+      Saves the audio, a frame every 2 seconds (for reading on-screen text), a sheet of 12 frames to see the
+      whole video at a glance, and the English transcript if input/VIDEO.transcript.txt exists. --music-only
+      marks a video with music and no voice-over: there is nothing to transcribe, separate or dub.
+  python3 scripts/video.py reject output/RUN --video NAME --language fr --reason "why"
+      Marks a made video as rejected after review: it moves to old/ and the kit shows the reason, not the video.
   python3 scripts/video.py dub output/RUN --video NAME --language fr [--music-volume 1.0] [--starts 0.1,6.8,...]
       Lays the recorded translation over the original music, each sentence where the English one starts.
       The picture is copied untouched and the sound is cut to the picture's length.
@@ -13,6 +16,7 @@
       Only titles, call-outs and small interface text are changed ("kind" in media-text.json). An animated GIF
       is worked on as the MP4 that prepare made from it.
 """
+from datetime import datetime
 import hashlib
 import json
 import math
@@ -852,6 +856,7 @@ def cmd_screen(run_dir, name, code):
     fps, W, H = info["fps"], info["width"], info["height"]
     total = int(round(info["picture_seconds"] * fps))
     folder = run_dir / "video" / name / code
+    set_aside(folder, ("localized.mp4", "screen.json", "rejected.json"))  # a failed run must not leave an old result behind
     base = folder / "dubbed.mp4" if (folder / "dubbed.mp4").exists() else source
     work = folder / "screen"
     if work.exists():
@@ -1064,6 +1069,28 @@ def cmd_screen(run_dir, name, code):
 GIF_RATE = "30000/1001"  # an animated GIF becomes a 29.97 fps MP4: LinkedIn video ads take "less than 30 FPS"
 
 
+def set_aside(folder, names):
+    """Earlier results move to old/ with the time in their name, never deleted."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    for name in names:
+        if (folder / name).exists():
+            (folder / "old").mkdir(exist_ok=True)
+            (folder / name).rename(folder / "old" / f"{stamp}-{name}")
+
+
+def cmd_reject(run_dir, name, code, reason):
+    """A made video that does not pass review: set aside, with the reason, so the kit never shows it as a draft."""
+    folder = Path(run_dir) / "video" / name / code
+    made = [n for n in ("localized.mp4", "dubbed.mp4") if (folder / n).exists()]
+    if not made:
+        raise SystemExit(f"No made video for {name} in {code} to reject.")
+    if not reason.strip():
+        raise SystemExit('Say why with --reason "...", for example --reason "the title is half replaced in the fade".')
+    set_aside(folder, made + ["screen.json"])
+    save(folder / "rejected.json", dict(label=LABEL, rejected_at=now(), files=made, reason=reason.strip()))
+    print(json.dumps(dict(rejected=made, moved_to=str(folder / "old"), reason=reason.strip()), ensure_ascii=False))
+
+
 def source_video(run_dir, name):
     """The video to work from: the input file, or for an animated GIF the MP4 that prepare made from it."""
     data = load(Path(run_dir) / "lines.json")
@@ -1078,7 +1105,7 @@ def source_video(run_dir, name):
     return matches[0]
 
 
-def cmd_prepare(run_dir, video, every):
+def cmd_prepare(run_dir, video, every, music_only=False):
     video = Path(video).resolve()
     if not video.is_file():
         raise SystemExit(f"{video} not found.")
@@ -1102,10 +1129,13 @@ def cmd_prepare(run_dir, video, every):
     for t in times:
         run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", t, "-i", video, "-frames:v", "1",
              "-vf", "scale='min(1280,iw)':-2", "-q:v", "3", frames / f"t{t:07.2f}.jpg"])
+    run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", video, "-vf",  # the whole video at a glance, free
+         f"fps=12/{max(info['picture_seconds'], 0.5)},scale=320:-2,tile=4x3", "-frames:v", "1", "-q:v", "3", frames / "sheet.jpg"])
     transcript = original.with_name(original.stem + ".transcript.txt")
     if transcript.exists():
         shutil.copy2(transcript, folder / "transcript.txt")
-    record = dict(prepared_at=now(), video=original.name, **info, frames_every_seconds=every,
+    voice = "none" if music_only or not info["has_audio"] else None
+    record = dict(prepared_at=now(), video=original.name, **info, voice=voice, sheet="frames/sheet.jpg", frames_every_seconds=every,
                   frames=[f"frames/t{t:07.2f}.jpg" for t in times],
                   transcript="transcript.txt" if transcript.exists() else None,
                   sha256=hashlib.sha256(original.read_bytes()).hexdigest())
@@ -1116,8 +1146,10 @@ def cmd_prepare(run_dir, video, every):
                                                                      "at least 3." if info["picture_seconds"] < 3 else "")))
     save(folder / "video.json", record)
     print(json.dumps(dict(folder=str(folder), duration=info["duration"], size=f"{info['width']}x{info['height']}",
-                          has_audio=info["has_audio"], frames=len(times), transcript=record["transcript"] or (
-                              "none needed: no sound" if not info["has_audio"] else
+                          has_audio=info["has_audio"], frames=len(times), sheet=str(frames / "sheet.jpg"),
+                          voice="none (music only)" if music_only and info["has_audio"] else "none (no sound)" if voice else
+                          "ask: a voice-over, or only music?", transcript=record["transcript"] or (
+                              "none needed: no voice-over" if voice else
                               "none: write input/<name>.transcript.txt or run voice.py transcribe (paid)"),
                           **({"note": record["note"]} if record.get("note") else {})), indent=1))
 
@@ -1126,7 +1158,7 @@ def main(argv):
     if "-h" in argv or "--help" in argv:
         print(__doc__)
         return
-    if not argv or argv[0] not in ("prepare", "dub", "screen") or len(argv) < 3:
+    if not argv or argv[0] not in ("prepare", "dub", "screen", "reject") or len(argv) < 3:
         raise SystemExit(__doc__)
     tools()
     step, run_dir = argv[0], argv[1]
@@ -1136,13 +1168,15 @@ def main(argv):
         except ValueError:
             raise SystemExit(f"{flag} needs a number, for example {flag} 0.5") from None
     if step == "prepare":
-        cmd_prepare(run_dir, argv[2], option("--every", 2.0))
+        cmd_prepare(run_dir, argv[2], option("--every", 2.0), "--music-only" in argv)
         return
     if "--video" not in argv or "--language" not in argv:
         raise SystemExit(f"Usage: python3 scripts/video.py {step} output/RUN --video NAME --language CODE")
     name, code = option("--video", ""), option("--language", "")
     if step == "dub":
         cmd_dub(run_dir, name, code, option("--music-volume", 1.0), option("--starts", ""))
+    elif step == "reject":
+        cmd_reject(run_dir, name, code, option("--reason", ""))
     else:
         cmd_screen(run_dir, name, code)
 
