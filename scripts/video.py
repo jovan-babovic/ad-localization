@@ -20,7 +20,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import LABEL, ROOT, load, now, save, use_venv  # noqa: E402
+from job import LABEL, ROOT, load, now, option as value_of, save, use_venv  # noqa: E402
 
 MAX_TEMPO = 1.15
 SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
@@ -390,6 +390,9 @@ def word_clusters(cols, gap):
 
 
 def ocr_frames(paths):
+    if not shutil.which("swift"):
+        raise SystemExit("Text on screen needs macOS (Apple's text recognition). On a Mac, swift comes with the Xcode "
+                         "Command Line Tools: xcode-select --install")
     swift = Path(__file__).with_name("ocr_lines.swift")
     out = json.loads(run(["swift", swift] + [str(p) for p in paths]))
     return {Path(f["file"]).name: f["lines"] for f in out["frames"]} if "frames" in out else {Path(paths[0]).name: out["lines"]}
@@ -655,7 +658,11 @@ def main(argv):
         raise SystemExit(__doc__)
     tools()
     step, run_dir = argv[0], argv[1]
-    option = lambda flag, default: type(default)(argv[argv.index(flag) + 1]) if flag in argv else default  # noqa: E731
+    def option(flag, default):
+        try:
+            return type(default)(value_of(argv, flag, default))
+        except ValueError:
+            raise SystemExit(f"{flag} needs a number, for example {flag} 0.5") from None
     if step == "prepare":
         cmd_prepare(run_dir, argv[2], option("--every", 2.0))
         return

@@ -50,6 +50,16 @@ def load(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def option(args, flag, default=None):
+    """The value after `flag` on the command line, `default` when the flag is absent, a plain message when it's empty."""
+    if flag not in args:
+        return default
+    rest = args[args.index(flag) + 1:]
+    if not rest or rest[0].startswith("--"):
+        raise SystemExit(f"Add a value after {flag}.")
+    return rest[0]
+
+
 def save(path, value):
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 

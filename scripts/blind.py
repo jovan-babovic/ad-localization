@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import LABEL, load, now, save, use_venv  # noqa: E402
+from job import LABEL, load, now, option, save, use_venv  # noqa: E402
 
 BATCH = 25  # small enough to finish well inside the time limit; a batch that fails is split in two and sent again
 SYSTEM = ("You translate advertising text into English for a quality check. You have no source text and must not guess "
@@ -112,7 +112,7 @@ def main(argv):
     if not argv or argv[0].startswith("-"):
         raise SystemExit(__doc__)
     run_dir = Path(argv[0]).resolve()
-    model = argv[argv.index("--model") + 1] if "--model" in argv else "sonnet"
+    model = option(argv, "--model", "sonnet")
     if not shutil.which("claude"):
         raise SystemExit("The claude command is not installed or not on PATH; no blind check was run.")
     store_path = run_dir / "back-translations.json"

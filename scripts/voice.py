@@ -29,7 +29,7 @@ import uuid
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from job import LABEL, ROOT, load, now, save, use_venv  # noqa: E402
+from job import LABEL, ROOT, load, now, option, save, use_venv  # noqa: E402
 
 API = "https://api.elevenlabs.io"
 RESERVE = 10_000
@@ -198,7 +198,7 @@ def model_language(client, model_id, code):
 
 
 def cmd_voices(client, args):
-    code = args[args.index("--language") + 1] if "--language" in args else None
+    code = option(args, "--language")
     base = code.split("-")[0].lower() if code else None
     found = []
     for kind in ("default", "community"):
@@ -268,7 +268,7 @@ def cmd_speak(client, run_dir, name, code, args, confirm):
     markets = {m["code"]: m for m in load(Path(run_dir) / "lines.json")["markets"]}
     if code not in markets:
         raise SystemExit(f"{code} is not a language in this run.")
-    voice_id = args[args.index("--voice") + 1] if "--voice" in args else markets[code].get("voice_id")
+    voice_id = option(args, "--voice") or markets[code].get("voice_id")
     if not voice_id:
         raise SystemExit(f"No voice chosen for {code}. Run: python3 scripts/voice.py voices --language {code}, pick one, "
                          "and save its voice_id in config/markets.json (or pass --voice ID).")
@@ -276,7 +276,7 @@ def cmd_speak(client, run_dir, name, code, args, confirm):
     if not stock_voice(voice):
         raise SystemExit(f"Voice {voice.get('name')} ({voice.get('category')}) is not a ready-made stock voice. "
                          "This job never uses cloned or account-made voices.")
-    model_id = args[args.index("--model") + 1] if "--model" in args else TTS_MODEL
+    model_id = option(args, "--model", TTS_MODEL)
     language = model_language(client, model_id, code)
     text, spoken = script_for(run_dir, name, code, "--short" in args)
     if len(text) > 5000:
@@ -359,7 +359,7 @@ def main(argv):
         else:
             if len(argv) < 2 or "--video" not in argv:
                 raise SystemExit(f"Usage: python3 scripts/voice.py {step} output/RUN --video NAME ...")
-            run_dir, name = argv[1], argv[argv.index("--video") + 1]
+            run_dir, name = argv[1], option(argv, "--video")
             if step == "transcribe":
                 cmd_transcribe(client, run_dir, name, confirm)
             elif step == "stems":
@@ -367,7 +367,7 @@ def main(argv):
             else:
                 if "--language" not in argv:
                     raise SystemExit("Add --language CODE (for example --language fr).")
-                cmd_speak(client, run_dir, name, argv[argv.index("--language") + 1], argv, confirm)
+                cmd_speak(client, run_dir, name, option(argv, "--language"), argv, confirm)
     except (ValueError, FileNotFoundError) as error:
         raise SystemExit(str(error)) from None
 

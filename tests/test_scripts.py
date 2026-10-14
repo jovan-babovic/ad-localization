@@ -99,6 +99,15 @@ class Config(unittest.TestCase):
             self.assertEqual(job.read_config(Path(tmp))[1], [])
 
 
+class Options(unittest.TestCase):
+    def test_a_flag_without_its_value_gets_a_plain_message(self):
+        self.assertEqual(job.option(["run", "--video", "ad"], "--video"), "ad")
+        self.assertEqual(job.option(["run"], "--model", "sonnet"), "sonnet")
+        for args in (["run", "--video"], ["run", "--video", "--language", "fr"]):
+            with self.assertRaisesRegex(SystemExit, "Add a value after --video"):
+                job.option(args, "--video")
+
+
 class Prepare(unittest.TestCase):
     def test_repeated_text_is_translated_once_and_fields_get_limits(self):
         with tempfile.TemporaryDirectory() as tmp:

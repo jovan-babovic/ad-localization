@@ -632,5 +632,7 @@ if __name__ == "__main__":
             apply(*args[1:])
         else:
             raise SystemExit(__doc__)
+    except FileExistsError as error:
+        raise SystemExit(f"{error} already exists. Delete it or pick another output name.") from None
     except (ValueError, FileNotFoundError) as error:
         raise SystemExit(str(error)) from None
