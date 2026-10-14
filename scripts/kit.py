@@ -24,6 +24,7 @@ FIELD_LABELS = {"primary_text": "Text above the ad", "headline": "Headline", "de
                 "script": "Voice-over script", "screen_text": "Text on screen"}
 PLATFORM_NAMES = {"linkedin": "LinkedIn", "google": "Google Ads", "meta": "Meta", "image": "image", "video": "video"}
 RESULT_TEXT = {"fits": ("ok", "Fits"), "over_recommended": ("warn", "Longer than recommended"),
+               "over_recommended_like_english": ("plain", "Longer than recommended, like the English"),
                "over_max": ("bad", "Over the platform limit"), "within_estimate": ("ok", "Within timing estimate"),
                "over_budget": ("warn", "Probably too long for its box"),
                "over_estimate": ("warn", "Long for the video"), "no_limit": ("plain", "No character limit")}
@@ -290,7 +291,8 @@ def build(run_dir):
                 row = drafts[key]
                 short = variants.get((*key, "short"))
                 counts["lines"] += 1
-                counts["fits"] += full["result"] in ("fits", "within_estimate", "no_limit", "over_recommended", "over_estimate")
+                counts["fits"] += full["result"] in ("fits", "within_estimate", "no_limit", "over_recommended",
+                                                     "over_recommended_like_english", "over_estimate")
                 counts["short"] += full["result"] == "over_max" and bool(short) and short["result"] == "fits"
                 counts["none"] += full["result"] == "over_max" and not (short and short["result"] == "fits")
                 counts["check"] += (full["result"] in ("over_recommended", "over_estimate", "over_budget") or any(

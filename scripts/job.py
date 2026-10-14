@@ -34,6 +34,7 @@ FIELD_ALIASES = {"intro": "primary_text", "introductory_text": "primary_text", "
                  "title": "headline", "button": "cta", "call_to_action": "cta", "desc": "description",
                  "display_path": "path"}
 SURFACE_FIELDS = {"image": "image_text", "spoken": "script", "screen": "screen_text"}
+LONGER_THAN_ENGLISH = 1.2  # an English text already over the recommended length: flag a draft only past 20% longer
 
 
 def now():
@@ -79,9 +80,25 @@ def name_count(value, name):
     return len(re.findall(r"(?<![\w.])" + re.escape(name) + r"(?!\w|\.\w)", value))
 
 
+MULTIPLIERS = [(r"mil millones", 10 ** 9), (r"[Kk千]", 1000), (r"M", 10 ** 6), (r"B|bn", 10 ** 9), (r"[万萬]", 10 ** 4),
+               (r"[亿億]", 10 ** 8), (r"mil", 1000)]
+MULTIPLIED = re.compile(r"(?<![\d.,])(\d+)(?:[.,](\d{1,2}))?\s?(" + "|".join(m for m, _ in MULTIPLIERS) + r")(?![A-Za-z])")
+
+
+def expand_numbers(value):
+    """'100K', '10 万', '100 mil' and '1.5M' written out in full, grouped by thousands ('100 000', '1 500 000')."""
+    def full(match):
+        whole, part, unit = match.groups()
+        factor = next(f for m, f in MULTIPLIERS if re.fullmatch(m, unit))
+        number = round(float(f"{whole}.{part or 0}") * factor)
+        return f"{number:,}".replace(",", " ")
+    return MULTIPLIED.sub(full, value)
+
+
 def digit_groups(value):
-    """'1,000' '1 000' and '1.000' all give ['1', '000']; '2.5' and '2,5' both give ['2', '5']."""
-    return sorted(re.findall(r"\d+", value))
+    """'1,000' '1 000' and '1.000' all give ['1', '000']; '2.5' and '2,5' both give ['2', '5']; '100K' and '10 万'
+    both give ['000', '100']."""
+    return sorted(re.findall(r"\d+", expand_numbers(value)))
 
 
 # ---------- config ----------
@@ -90,12 +107,12 @@ def config_dir(example=False):
     return ROOT / ("examples/config" if example else "config")
 
 
-def never_translate(glossary_text):
-    """Read the bullet list under '## Never translate' in glossary.md."""
+def never_translate(glossary_text, heading="never translate"):
+    """Read the bullet list under '## Never translate' (or another heading) in glossary.md."""
     names, inside = [], False
     for line in glossary_text.splitlines():
         if line.startswith("## "):
-            inside = line[3:].strip().lower().startswith("never translate")
+            inside = line[3:].strip().lower().startswith(heading)
             continue
         if inside and re.match(r"\s*[-*]\s+\S", line):
             name = re.sub(r"^\s*[-*]\s+", "", line).strip().strip("`").strip()
@@ -139,10 +156,14 @@ def read_config(folder):
     for key, value in (markets.get("limits") or {}).items():
         if "." not in key or not isinstance(value, dict) or not set(value) <= {"max", "recommended", "note"}:
             problems.append(f"limits \"{key}\" should look like \"linkedin.headline\": {{\"max\": 200, \"recommended\": 70}}.")
-    names = never_translate(files["glossary.md"].read_text(encoding="utf-8"))
+    glossary = files["glossary.md"].read_text(encoding="utf-8")
+    names = never_translate(glossary)
+    # Generic words that are also product names (Connect, Insights): Claude keeps them where they name the product;
+    # the script does not count them, since "Connect your fleet" is not the name.
     config = dict(folder=str(folder), source_language=markets.get("source_language", "English"),
                   markets=markets.get("markets") or [], platforms=markets.get("platforms") or [],
-                  limit_overrides=markets.get("limits") or {}, never_translate=names, limits=limits)
+                  limit_overrides=markets.get("limits") or {}, never_translate=names,
+                  names_in_context=never_translate(glossary, "names in context"), limits=limits)
     if not names:
         warnings.append("glossary.md has no names under '## Never translate'. Brand and product names will not be checked.")
     return (None if problems else config), problems, warnings
@@ -270,7 +291,7 @@ def build_lines(config, input_dir, run_dir, languages=None):
                  videos=[p.name for p in files if p.suffix.lower() in VIDEO_TYPES])
     return dict(label=LABEL, built_at=now(), config=config["folder"], input=str(input_dir),
                 source_language=config["source_language"], markets=markets, never_translate=config["never_translate"],
-                fields=fields, lines=list(lines.values()), media=media)
+                names_in_context=config.get("names_in_context", []), fields=fields, lines=list(lines.values()), media=media)
 
 
 def new_run_dir(example):
@@ -362,9 +383,14 @@ def check(run_dir):
                     result = "over_max"
                     flag("over_max", "fail", f"{count} characters; the platform allows {limit['max']}.", variant=variant, **refs)
                 elif limit.get("recommended") and count > limit["recommended"]:
-                    result = "over_recommended"
-                    flag("over_recommended", "review", f"{count} characters; the platform recommends {limit['recommended']} or fewer "
-                         "so it is not cut off.", variant=variant, **refs)
+                    english = characters(line["text"], line["platform"])
+                    if english > limit["recommended"] and count <= english * LONGER_THAN_ENGLISH:
+                        result = "over_recommended_like_english"  # the English is cut off there too
+                    else:
+                        result = "over_recommended"
+                        flag("over_recommended", "review", f"{count} characters; the platform recommends {limit['recommended']} or "
+                             f"fewer so it is not cut off" + (f", and the English has {english}." if english > limit["recommended"]
+                                                              else "."), variant=variant, **refs)
                 else:
                     result = "fits"
             elif limit["kind"] == "layout" and limit.get("recommended"):
@@ -484,7 +510,8 @@ def main(argv):
             raise SystemExit("Config is not ready: fix the points above (or run /setup again).")
         print(json.dumps(dict(ok=True, languages=[f"{m['language']} ({m['code']}, {m['market']}, {m['address']})"
                                                   for m in config["markets"]],
-                              platforms=config["platforms"], never_translate=config["never_translate"]),
+                              platforms=config["platforms"], never_translate=config["never_translate"],
+                              names_in_context=config["names_in_context"]),
                          ensure_ascii=False, indent=1))
     elif argv[0] == "prepare":
         prepare(argv[1:])

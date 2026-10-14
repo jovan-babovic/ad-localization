@@ -73,6 +73,14 @@ class Counting(unittest.TestCase):
         self.assertEqual(job.digit_groups("1,000 users, 2.5x"), job.digit_groups("1 000 utilisateurs, 2,5x"))
         self.assertNotEqual(job.digit_groups("30 days"), job.digit_groups("14 jours"))
 
+    def test_thousands_written_the_local_way_are_the_same_number(self):
+        for local in ("10 万+ 用户", "10万+", "100 000+", "100.000+ usuarios", "100 mil+ usuarios"):
+            self.assertEqual(job.digit_groups(local), job.digit_groups("100K+ users"), local)
+        self.assertEqual(job.digit_groups("1,5 mil"), job.digit_groups("1.5K"))
+        self.assertNotEqual(job.digit_groups("10 万"), job.digit_groups("10K"))
+        for left_alone in ("5 Kunden", "2 Mbps", "v2 Mail", "2.5x"):
+            self.assertEqual(job.expand_numbers(left_alone), left_alone)
+
 
 class Config(unittest.TestCase):
     def test_example_config_is_valid(self):
@@ -208,6 +216,22 @@ class Check(unittest.TestCase):
         rows[0]["short_version"] = "Acme Pro"
         job.save(self.run / "drafts.json", {"translations": rows})
         self.assertEqual(self.codes()["short_without_note"], "error")
+
+    def test_long_english_text_only_flags_a_much_longer_draft(self):
+        english = "Acme Pro " + "x" * 191  # LinkedIn recommends 150; the English already runs 200
+        run = make_run(Path(self.tmp.name) / "long", [("A", "linkedin", "primary_text", english)])
+        draft_all(run, lambda l: "Acme Pro " + "y" * 221)  # 230: 15% longer
+        results = {v["result"] for v in job.check(run)["variants"]}
+        self.assertEqual(results, {"over_recommended_like_english"})
+        self.assertNotIn("over_recommended", {f["code"] for f in job.check(run)["findings"]})
+        draft_all(run, lambda l: "Acme Pro " + "y" * 251)  # 260: 30% longer
+        self.assertIn("over_recommended", {f["code"] for f in job.check(run)["findings"]})
+
+    def test_names_in_context_are_read_but_not_counted(self):
+        folder = Path(self.tmp.name) / "config"
+        write(folder / "glossary.md", "# Glossary\n\n## Never translate\n- Acme\n\n## Names in context\n- Connect\n")
+        config = job.read_config(folder)[0]
+        self.assertEqual((config["never_translate"], config["names_in_context"]), (["Acme"], ["Connect"]))
 
     def test_same_english_translated_two_ways_is_flagged(self):
         draft_all(self.run, lambda l: ("Acme Pro : 30 minutes" if l["field"] == "headline" else "Acme Pro, 30 minutes")
