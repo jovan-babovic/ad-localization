@@ -3,7 +3,7 @@ name: localize
 description: Run the ad-localization job on the ads in input/ (or on the sample with "/localize example"). Drafts every ad for each market in config/, checks lengths, names and numbers, runs a blind back-translation, re-sets the text in image ads, dubs video ads with a stock voice after asking, and builds a review kit. Use when the user types /localize.
 argument-hint: "[example] [language codes, e.g. fr,es]"
 disable-model-invocation: true
-allowed-tools: Edit(./output/**) Edit(./config/markets.json) Bash(python3 scripts/job.py *) Bash(python3 scripts/blind.py *) Bash(python3 scripts/kit.py *) Bash(python3 scripts/video.py *) Bash(python3 scripts/reset_image_text.py *) Bash(python3 scripts/voice.py account) Bash(python3 scripts/voice.py voices *)
+allowed-tools: Edit(./output/**) Edit(./config/markets.json) Bash(python3 scripts/job.py *) Bash(python3 scripts/blind.py *) Bash(python3 scripts/kit.py *) Bash(python3 scripts/video.py *) Bash(python3 scripts/reset_image_text.py *) Bash(python3 scripts/phone_check.py *) Bash(python3 scripts/voice.py account) Bash(python3 scripts/voice.py voices *)
 ---
 
 # /localize: from English ads to a review kit
@@ -12,8 +12,19 @@ Arguments: `$ARGUMENTS`. If they include `example`, add `--example` to the confi
 company and ads from `examples/`). Language codes (for example `fr,es`) go to `--languages`.
 
 Follow `CLAUDE.md` throughout: the AI-draft label everywhere, nothing uploaded, ask before every paid step, stock
-voices only, the key never in the chat, blind back-translation stays blind. Run every command exactly as written
-here, from this folder, without `cd`. Tell the person what you are doing in one short line per step.
+voices only, the key never in the chat, blind back-translation stays blind, a fresh computer (only the kit's own
+tools), dashboards left in their language. Run every command exactly as written here, from this folder, without
+`cd`. Tell the person what you are doing in one short line per step.
+
+## 0. Getting the ads in (when the person pastes ad-library links)
+
+Ad libraries make poor sources. LinkedIn's Ad Library blocks simple downloads, and the file it plays is LinkedIn's own
+re-saved copy, often bigger than the advertiser's upload and not the original. Google's Ads Transparency Center
+shows one combination of a responsive search ad, cuts long descriptions with "...", and hides text inside frames.
+So recommend the manual route in `input/README.md`: the person saves the media from their own files or ad account,
+pastes the text into the CSV, and puts each ad's link in the `source` column. For Google search ads, export the
+assets from the Google Ads account. If you do fetch a file for them, list every version on offer with its size and
+ask before downloading, quoting the size of the one you will take. A browser extension is optional; never depend on it.
 
 ## 1. Start the run
 
@@ -23,7 +34,9 @@ python3 scripts/job.py prepare           (add --example, and --languages fr,es i
 ```
 
 If config is not ready, say so and suggest `/setup`. Prepare prints the run folder, called RUN below
-(for example `output/2026-10-20-0930`), and lists the images and videos it found.
+(for example `output/2026-10-20-0930`), and lists the images and videos it found. If it warns that a text ends in
+"...", ask the person for the full text before translating; never translate half a sentence. A GIF with one
+picture counts as an image; an animated GIF counts as a video with no sound, and its draft comes out as an MP4.
 
 Read the company files now: `config/company.md`, `config/markets.json`, `config/glossary.md`
 (for the sample: the same names under `examples/config/`).
@@ -49,22 +62,50 @@ Read the company files now: `config/company.md`, `config/markets.json`, `config/
 ]}
 ```
 
-**Videos.** For each video run `python3 scripts/video.py prepare RUN input/NAME.mp4` (for the sample:
-`examples/input/NAME.mp4`). It saves the audio, a frame every 2 seconds in `RUN/video/NAME/frames/` and the
-transcript if `NAME.transcript.txt` sits next to the video. If the frames show English text on screen, run the
-same command again with `--every 0.5` before you pick the times below.
-- No transcript? Ask the person: add `NAME.transcript.txt` themselves (free), or pay for transcription. For the
-  paid route run `python3 scripts/voice.py transcribe RUN --video NAME`, show the estimate, and only after a yes
-  run it again with `--confirm`.
+**Videos** (an animated GIF is a video too). For each one run `python3 scripts/video.py prepare RUN input/NAME.mp4`
+(for the sample: `examples/input/NAME.mp4`). It saves the audio, a frame every 2 seconds in
+`RUN/video/NAME/frames/`, a sheet of 12 frames (`frames/sheet.jpg`) and the transcript if `NAME.transcript.txt`
+sits next to the video. If the frames show a lot of English text on screen, run the same command again with
+`--every 0.5`: reading those frames makes the times and boxes below much easier to set.
+
+- **Voice-over, or only music?** Ask early, unless prepare already says "no sound". Show the frame sheet if it
+  helps. Do not try to detect speech with a tool on this computer. If the person is not sure, offer the paid
+  transcription (estimate first) as below.
+- **Music only:** run prepare again with `--music-only`. There is nothing to transcribe, separate, record or dub,
+  so nothing is paid: add no `spoken` item and go straight to the text on screen. The kit labels it
+  "Voice: none (music only)".
+- **Voice-over without a transcript?** Ask the person: add `NAME.transcript.txt` themselves (free), or pay for
+  transcription. For the paid route run `python3 scripts/voice.py transcribe RUN --video NAME`, show the
+  estimate, and only after a yes run it again with `--confirm`.
 - Add the voice-over as one item: `{"id": "NAME.script", "file": "NAME.mp4", "surface": "spoken", "text": "<transcript>"}`.
-- Look at the frames. For English text on screen, add one item each with when it shows and where:
-  `{"id": "NAME.s1", "file": "NAME.mp4", "surface": "screen", "text": "Introducing Field Mode", "start": 9.5, "end": 12.2, "box": [246, 332, 756, 78], "frame": 11.0}`.
-  `text` is the whole line once it is complete. `start` is the last frame before the text appears and `end` the
-  first frame after it is gone, so the window covers its zoom, typing and fade; `frame` is a time where the whole
-  line is fully typed in and fully opaque, not fading; `box` is where it sits then, in the video's pixels. Add
-  `"align": "center"` for centered titles.
-  Only one-line text on a plain background can be redrawn; leave product screens, logos, text over footage and
-  lines made only of names under "Never translate" in English.
+- **Text on screen.** Look at the frames. For each piece of English text add one item with its kind, when it shows
+  and where:
+  `{"id": "NAME.s1", "file": "NAME.mp4", "surface": "screen", "kind": "title", "text": "Introducing Field Mode", "start": 9.5, "end": 12.2, "box": [246, 332, 756, 78], "frame": 11.0}`.
+  `text` is the whole text once it is complete (all its lines). `start` is the last frame before it appears and
+  `end` the first frame after it is gone, so the window covers its whole entrance and exit. `frame` is a time
+  where it is fully shown, fully opaque and not moving; `box` is where it sits then, in the video's pixels, around
+  all its lines. Add `"align"` (`left`, `center`, `right`) when the lines share an edge.
+
+  `kind` decides what happens:
+  - `title`: a headline or caption ("Introducing Field Mode"). Translated.
+  - `callout`: a floating card or label laid over the product ("Inspection saved · 3 photos"). Translated, keeping
+    names, IDs and numbers as written.
+  - `ui-small`: a small interface element: a typed prompt box, a chip, a toast ("Show me last week's
+    inspections"). Translated.
+  - `dashboard`: a data-dense product screen: tables, charts, forms, the full app. Never translated.
+  - `logo`: a logo or a line made only of names under "Never translate". Never translated.
+  - `footage`: text that is part of filmed footage (a street sign). Never translated.
+  Record the never-translated kinds too, so the kit shows they were seen and left on purpose.
+
+  How the text is redrawn: one line on a plain background follows its zoom, typing and fade. A block of several
+  lines, or text over a gradient or picture, is followed as it slides and fades; a block that zooms or turns is
+  flagged and left in English. If `company.md` names the fonts, set `"font"` on the item (a file name such as
+  `"Avenir Next.ttc#7"`, or a path from `config/fonts.txt`). When some words are in a highlight style (bold italic,
+  another colour), set `"highlight_font"` too. To pick a font by eye after a first `screen` run, draw the closest
+  fonts next to the original: `python3 scripts/reset_image_text.py fonts RUN/video/NAME/CODE/screen/ITEM/fNNNNN.png
+  RUN/video/NAME/CODE/screen/ITEM.boxes.json RUN/video/NAME/ITEM.fonts.png` (fNNNNN is the item's `frame` as a
+  frame number), look at the sheet and pin the best one. If a logo sits inside a line of text, add its box to `"keep_boxes": [[x, y, w, h]]`
+  so it is not erased.
 
 Then refresh the lines: `python3 scripts/job.py prepare RUN`. Text in images and on screen now shows about how
 many characters fit its box (`limit.recommended`).
@@ -73,8 +114,9 @@ many characters fit its box (`limit.recommended`).
 
 Read `RUN/lines.json`. Each line has `line_id`, `language`, `text`, the platform and field, its `limit` and the
 `names` that must stay unchanged. Write `RUN/drafts.json` following "How to translate" in `CLAUDE.md`: one
-entry per line and language, a short version with a note whenever the full one is over a limit. For many lines,
-work one language at a time.
+entry per line and language, a short version with a note whenever the full one is over a limit. For text on
+screen set over several lines, add `"lines"` with the line breaks and `*highlights*` (look at the frame for which
+words are highlighted). For many lines, work one language at a time.
 
 ## 4. Check, back-translate, judge meaning
 
@@ -126,17 +168,25 @@ For each video and language:
    back-translate it first), then mix again. If it says a sentence would be cut mid-sound, record again with
    `voice.py speak` (it records one clip per sentence, so every cut falls in silence).
 5. **Text on screen**: `python3 scripts/video.py screen RUN --video NAME --language CODE` when the video has
-   on-screen text items. Every frame the English shows in is redrawn in the translation, following its zoom,
-   typing and fade, and the changed frames are read back for leftover English. Look at the frames it changed
-   (`RUN/video/NAME/CODE/screen/<item>/out/`): the first, a typing frame, a held frame and the last.
+   on-screen text items (for a music-only video this is the only step). Every frame the English shows in is
+   redrawn in the translation, and the changed frames are read back for leftover English. Look at the frames it
+   changed (`RUN/video/NAME/CODE/screen/<item>/out/`): the first, a moving or fading frame, a held frame and the
+   last, next to the same frames of the original. If a render is wrong (half-replaced text, a visible patch, a
+   wrong colour), set it aside so the kit never shows it as a draft:
+   `python3 scripts/video.py reject RUN --video NAME --language CODE --reason "what is wrong"`.
 
-If the person says no to spending, skip the video; the kit still shows the translated script.
+If the person says no to spending, skip the dub; the kit still shows the translated script.
 
 ## 7. Build the kit and hand it over
 
 ```
 python3 scripts/kit.py RUN
+python3 scripts/phone_check.py RUN
 ```
+
+The second command shows every page at phone width (`RUN/checks/phone.html`); with Chrome installed it also lists
+anything too wide and saves `RUN/checks/phone.png`. Look at it. Without Chrome, open the page yourself or say
+that you did not check phones.
 
 Then tell the person, briefly:
 - where the kit is: `RUN/kit/index.html` (one page per language, plus a CSV per language for copying text)

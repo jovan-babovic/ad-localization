@@ -38,6 +38,12 @@ STT_MODEL = "scribe_v2"
 # Official rates from https://elevenlabs.io/pricing, checked 2026-10-14. Stem separation has no published
 # rate there, so the Eleven Music rate (900 credits/minute) is used as an upper-bound estimate.
 CREDITS = {"tts_per_character": 1, "stt_per_minute": 330, "stems_per_minute_upper_bound": 900}
+LANGUAGE_ALIASES = {"nb": "no", "nn": "no"}  # ElevenLabs lists Norwegian as "no", not Bokmål "nb" or Nynorsk "nn"
+
+
+def base_language(code):
+    base = code.split("-")[0].lower()
+    return LANGUAGE_ALIASES.get(base, base)
 
 
 def api_key():
@@ -190,7 +196,7 @@ def script_for(run_dir, name, code, short):
 
 
 def model_language(client, model_id, code):
-    base = code.split("-")[0].lower()
+    base = base_language(code)
     models = {m["model_id"]: m for m in json.loads(client.call("/v1/models", timeout=60)[0])}
     if model_id not in models or not models[model_id].get("can_do_text_to_speech"):
         raise SystemExit(f"Model {model_id} is not available for text to speech on this account.")
@@ -203,7 +209,7 @@ def model_language(client, model_id, code):
 
 def cmd_voices(client, args):
     code = option(args, "--language")
-    base = code.split("-")[0].lower() if code else None
+    base = base_language(code) if code else None
     found = []
     for kind in ("default", "community"):
         token = ""

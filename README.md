@@ -73,7 +73,7 @@ Then, inside Claude Code:
    small add-ons that image and video ads need.
 2. Drop your ads into **`input/`**. Text ads go in a CSV with the columns `ad, platform, field, text`
    (see [`examples/input/text-ads.csv`](examples/input/text-ads.csv)). Image ads can be `.png`, `.jpg` or
-   `.webp`. Video ads can be `.mp4` or `.mov`.
+   `.webp`. Video ads can be `.mp4` or `.mov`. Animated GIFs work too; their drafts come out as MP4s.
 3. Type **`/localize`**. To do only some markets, add their language codes: `/localize fr,es`.
 4. Open the kit. Claude tells you where it is (`output/<date-time>/kit/index.html`). Double-click it in Finder, or
    ask Claude to open it. You get one page and one CSV per language, for copying approved text into your ad
@@ -114,11 +114,15 @@ you can read, and it never goes into a commit.
 6. **Media.** Image ads: the English text is erased and the translation is set in the same box. The rest of the
    design stays as it was, and a button label stays centered in its button. Each box gets a character budget
    before translating, so long lines get a short version up front. Text that still doesn't fit is flagged for a
-   shorter line, never squashed. Video ads: the music is split from the voice. A ready-made ElevenLabs voice
-   records the translated script. It never clones your speaker. Each sentence starts where the English one did,
-   over the original music. Text on screen is redrawn in every frame it shows, following its zoom, typing and
-   fade. Those frames are then read back to catch leftover English.
-7. **Kit.** The review pages, a CSV per language, and every piece of evidence behind them.
+   shorter line, never squashed. Chinese, Japanese and Korean are set in a matching font that ships with macOS.
+   Video ads: the music is split from the voice. A ready-made ElevenLabs voice records the translated script. It
+   never clones your speaker. Each sentence starts where the English one did, over the original music. A video
+   with only music skips all of that, so it costs nothing. Text on screen is redrawn in every frame it shows: a
+   one-line title follows its zoom, typing and fade, and a block of several lines follows its slide and fade over
+   any background. Titles, call-outs and small interface text are translated. Dashboards and logos stay as they
+   are. The changed frames are then read back to catch leftover English.
+7. **Kit.** The review pages, a CSV per language, and every piece of evidence behind them. A last check shows
+   every page at phone width.
 
 Before every paid step, Claude shows you the estimate in credits and waits for your yes.
 
@@ -171,7 +175,8 @@ scripts/blind.py              blind back-translation
 scripts/kit.py                the review kit
 scripts/voice.py              ElevenLabs: voices, transcription, music split, recording
 scripts/video.py              FFmpeg: frames, audio, mixing, on-screen text
-scripts/reset_image_text.py   erase and re-set text in image ads (with scripts/ocr_lines.swift)
+scripts/reset_image_text.py   erase and re-set text in image ads (with scripts/ocr_lines.swift), font sheets
+scripts/phone_check.py        the review kit at phone width
 scripts/save_key.py           save your ElevenLabs key without showing it
 scripts/limits.json           platform character limits and their sources
 requirements.txt              Pillow and NumPy, for image ads and text on screen
