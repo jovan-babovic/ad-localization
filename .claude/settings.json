@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 scripts/job.py *)",
+      "Bash(python3 scripts/blind.py *)",
+      "Bash(python3 scripts/kit.py *)",
+      "Bash(python3 scripts/video.py *)",
+      "Bash(python3 scripts/reset_image_text.py *)",
+      "Bash(python3 scripts/voice.py account)",
+      "Bash(python3 scripts/voice.py voices *)",
+      "Bash(python3 -m unittest *)",
+      "Bash(python3 --version)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install -r requirements.txt)",
+      "Bash(.venv/bin/python -c \"import PIL, numpy\")",
+      "Bash(.venv/bin/python -m unittest *)",
+      "Bash(which *)",
+      "Bash(ffprobe *)",
+      "Edit(./output/**)",
+      "Edit(./config/**)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(cat .env*)",
+      "Bash(python3 scripts/save_key.py*)"
+    ]
+  }
+}

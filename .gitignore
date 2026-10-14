@@ -1,0 +1,18 @@
+# Your ElevenLabs key (written by scripts/save_key.py)
+.env
+.env.*
+
+# Your ads, your company setup and every run stay on your computer
+input/*
+!input/README.md
+output/*
+!output/README.md
+config/*
+!config/README.md
+
+# This folder's own Python environment (README)
+.venv/
+
+__pycache__/
+*.pyc
+.DS_Store

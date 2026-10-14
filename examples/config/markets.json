@@ -1,0 +1,35 @@
+{
+  "source_language": "English",
+  "platforms": [
+    "google",
+    "meta",
+    "linkedin"
+  ],
+  "markets": [
+    {
+      "language": "French",
+      "code": "fr",
+      "market": "France",
+      "address": "vous",
+      "tone": "Professional and direct. Formal \"vous\" throughout. No anglicisms where a common French word exists.",
+      "voice_id": null
+    },
+    {
+      "language": "Spanish",
+      "code": "es",
+      "market": "Latin America",
+      "address": "tú",
+      "tone": "Neutral Latin American Spanish, no country slang. Informal \"tú\", friendly but professional.",
+      "voice_id": null
+    },
+    {
+      "language": "Portuguese",
+      "code": "pt-BR",
+      "market": "Brazil",
+      "address": "você",
+      "tone": "Brazilian Portuguese with \"você\". Warm and practical.",
+      "voice_id": null
+    }
+  ],
+  "limits": {}
+}

@@ -1,0 +1,53 @@
+{
+  "about": "Character limits per ad platform and field. 'max' is a hard limit the platform enforces; 'recommended' is the platform's advice to avoid text being cut off. A missing number is not a pass: the check marks it for review. Re-check the source pages before relying on these numbers; platforms change them.",
+  "sources": {
+    "google_rsa": {
+      "title": "Google Ads Help: About responsive search ads",
+      "url": "https://support.google.com/google-ads/answer/7684791?hl=en",
+      "checked": "2026-10-14"
+    },
+    "linkedin_single_image": {
+      "title": "LinkedIn Help: Single image ads advertising specifications",
+      "url": "https://www.linkedin.com/help/lms/answer/a426534",
+      "checked": "2026-10-14"
+    },
+    "meta_facebook_feed": {
+      "title": "Meta Ads Guide: Facebook Feed image ads",
+      "url": "https://www.facebook.com/business/ads-guide/update/image/facebook-feed",
+      "checked": "2026-10-08"
+    },
+    "meta_instagram_feed": {
+      "title": "Meta Ads Guide: Instagram Feed image ads",
+      "url": "https://www.facebook.com/business/ads-guide/update/image/instagram-feed",
+      "checked": "2026-10-08"
+    }
+  },
+  "platforms": {
+    "google": {
+      "name": "Google Ads (responsive search ads)",
+      "wide_characters_count_double": true,
+      "fields": {
+        "headline": {"max": 30, "sources": ["google_rsa"]},
+        "description": {"max": 90, "sources": ["google_rsa"]},
+        "path": {"max": 15, "sources": ["google_rsa"]}
+      }
+    },
+    "linkedin": {
+      "name": "LinkedIn (single image and video ads)",
+      "fields": {
+        "primary_text": {"recommended": 150, "max": 3000, "sources": ["linkedin_single_image"], "note": "LinkedIn calls this introductory text."},
+        "headline": {"recommended": 70, "max": 200, "sources": ["linkedin_single_image"]},
+        "description": {"recommended": 100, "max": 300, "sources": ["linkedin_single_image"]},
+        "cta": {"choose_from_list": true, "sources": ["linkedin_single_image"], "note": "The button is picked from LinkedIn's list; it is translated by LinkedIn, not typed."}
+      }
+    },
+    "meta": {
+      "name": "Meta (Facebook and Instagram feed ads)",
+      "fields": {
+        "primary_text": {"recommended": 125, "sources": ["meta_facebook_feed", "meta_instagram_feed"], "note": "Instagram Feed recommends 125; Facebook Feed recommends 50 to 150. No hard maximum is published in these guides."},
+        "headline": {"recommended": 27, "sources": ["meta_facebook_feed", "meta_instagram_feed"], "note": "Facebook Feed recommends 27, Instagram Feed 40. The stricter number is used."},
+        "cta": {"choose_from_list": true, "sources": ["meta_facebook_feed"], "note": "The button is picked from Meta's list; it is translated by Meta, not typed."}
+      }
+    }
+  }
+}

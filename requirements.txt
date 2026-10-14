@@ -1,0 +1,4 @@
+# Only image ads and on-screen video text need these; the text side uses Python's standard library.
+# Install into this folder's own environment (see README): python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+pillow>=10.3
+numpy>=1.26
